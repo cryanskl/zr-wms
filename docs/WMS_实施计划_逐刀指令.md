@@ -225,7 +225,7 @@
 ```
 分模块做，每块独立可验收。
 
-A. 报表与导出：
+A. 报表与导出（✅ 已完成）：
 - GET /reports/period?range=day|week|month → 日/周/月报（聚合 stock_movement）
 - GET /reports/dead-stock                   → 呆滞库存（长期无流水）
 - GET /reports/slot-utilization             → 库位利用率

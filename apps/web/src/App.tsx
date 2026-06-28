@@ -5,9 +5,11 @@ import {
   ArrowDownToLine,
   ArrowRightLeft,
   ArrowUpFromLine,
+  BarChart3,
   Boxes,
   ClipboardCheck,
   ClipboardList,
+  FileDown,
   LogOut,
   MapPinned,
   PackageSearch,
@@ -102,9 +104,20 @@ import {
   Stocktake,
   StocktakeLine,
 } from './stocktakeApi';
+import {
+  DeadStockRow,
+  downloadExport,
+  ExportRequestBody,
+  getDeadStockReport,
+  getPeriodReport,
+  getSlotUtilizationReport,
+  PeriodReportRow,
+  ReportRange,
+  SlotUtilizationRow,
+} from './reportApi';
 
 const { Title, Paragraph, Text } = Typography;
-type ActiveView = 'operations' | 'dashboard' | 'products' | 'warehouses' | 'orders' | 'stocktakes';
+type ActiveView = 'operations' | 'dashboard' | 'reports' | 'products' | 'warehouses' | 'orders' | 'stocktakes';
 
 const matchedLabels: Record<SearchResult['matched'], string> = {
   name: '产品名',
@@ -134,6 +147,8 @@ export function App() {
   const [dashboardProduct, setDashboardProduct] = useState('');
   const [dashboardWarehouse, setDashboardWarehouse] = useState<string | undefined>();
   const [dashboardQuality, setDashboardQuality] = useState<string | undefined>();
+  const [reportRange, setReportRange] = useState<ReportRange>('day');
+  const [deadStockDays, setDeadStockDays] = useState<number | null>(90);
   const [productTypeFilter, setProductTypeFilter] = useState<ProductType | undefined>();
   const [productActiveFilter, setProductActiveFilter] = useState<boolean | undefined>(true);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -246,6 +261,24 @@ export function App() {
   const lowStockQuery = useQuery({
     queryKey: ['low-stock', token],
     queryFn: () => getLowStock(token),
+    enabled: Boolean(token),
+  });
+
+  const periodReportQuery = useQuery({
+    queryKey: ['period-report', token, reportRange],
+    queryFn: () => getPeriodReport(token, reportRange),
+    enabled: Boolean(token),
+  });
+
+  const deadStockQuery = useQuery({
+    queryKey: ['dead-stock', token, deadStockDays],
+    queryFn: () => getDeadStockReport(token, deadStockDays),
+    enabled: Boolean(token),
+  });
+
+  const slotUtilizationQuery = useQuery({
+    queryKey: ['slot-utilization', token],
+    queryFn: () => getSlotUtilizationReport(token),
     enabled: Boolean(token),
   });
 
@@ -424,6 +457,20 @@ export function App() {
     },
     onError: (error) =>
       setNotice({ type: 'error', message: error instanceof Error ? error.message : '操作失败，请检查输入' }),
+  });
+
+  const exportMutation = useMutation({
+    mutationFn: (body: ExportRequestBody) => downloadExport(token, body),
+    onSuccess: ({ blob, fileName }) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice({ type: 'success', message: `已生成导出文件：${fileName}` });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '导出失败' }),
   });
 
   const warehouseOptions = (warehousesQuery.data ?? []).map((item) => ({
@@ -791,6 +838,7 @@ export function App() {
             { label: '订单', value: 'orders', icon: <ScrollText size={16} /> },
             { label: '盘点', value: 'stocktakes', icon: <ClipboardCheck size={16} /> },
             { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
+            { label: '报表', value: 'reports', icon: <BarChart3 size={16} /> },
             { label: '产品管理', value: 'products', icon: <PackageSearch size={16} /> },
             { label: '仓库库位', value: 'warehouses', icon: <MapPinned size={16} /> },
           ]}
@@ -1092,6 +1140,28 @@ export function App() {
             onProductChange={setDashboardProduct}
             onWarehouseChange={setDashboardWarehouse}
             onQualityChange={setDashboardQuality}
+          />
+        ) : activeView === 'reports' ? (
+          <ReportsView
+            range={reportRange}
+            deadStockDays={deadStockDays}
+            periodRows={periodReportQuery.data ?? []}
+            deadStockRows={deadStockQuery.data ?? []}
+            slotUtilizationRows={slotUtilizationQuery.data ?? []}
+            loading={periodReportQuery.isFetching || deadStockQuery.isFetching || slotUtilizationQuery.isFetching}
+            exporting={exportMutation.isPending}
+            error={
+              periodReportQuery.error instanceof Error
+                ? periodReportQuery.error.message
+                : deadStockQuery.error instanceof Error
+                  ? deadStockQuery.error.message
+                  : slotUtilizationQuery.error instanceof Error
+                    ? slotUtilizationQuery.error.message
+                    : null
+            }
+            onRangeChange={setReportRange}
+            onDeadStockDaysChange={setDeadStockDays}
+            onExport={(body) => exportMutation.mutate(body)}
           />
         ) : activeView === 'products' ? (
           <ProductManagement
@@ -2027,6 +2097,183 @@ function InventoryDashboard({
               </Space>
             </List.Item>
           )}
+        />
+      </section>
+    </>
+  );
+}
+
+interface ReportsViewProps {
+  range: ReportRange;
+  deadStockDays: number | null;
+  periodRows: PeriodReportRow[];
+  deadStockRows: DeadStockRow[];
+  slotUtilizationRows: SlotUtilizationRow[];
+  loading: boolean;
+  exporting: boolean;
+  error: string | null;
+  onRangeChange: (value: ReportRange) => void;
+  onDeadStockDaysChange: (value: number | null) => void;
+  onExport: (body: ExportRequestBody) => void;
+}
+
+function ReportsView({
+  range,
+  deadStockDays,
+  periodRows,
+  deadStockRows,
+  slotUtilizationRows,
+  loading,
+  exporting,
+  error,
+  onRangeChange,
+  onDeadStockDaysChange,
+  onExport,
+}: ReportsViewProps) {
+  return (
+    <>
+      <section className="operation-panel">
+        <Title level={4}>报表导出</Title>
+        {error && <Alert className="form-alert" type="error" showIcon message="报表查询失败" description={error} />}
+        <Space className="action-row" wrap>
+          <Button icon={<FileDown size={16} />} loading={exporting} onClick={() => onExport({ type: 'inventory' })}>
+            导出库存
+          </Button>
+          <Button icon={<FileDown size={16} />} loading={exporting} onClick={() => onExport({ type: 'movements' })}>
+            导出流水
+          </Button>
+          <Button
+            icon={<FileDown size={16} />}
+            loading={exporting}
+            onClick={() => onExport({ type: 'period', range })}
+          >
+            导出周期报表
+          </Button>
+          <Button
+            icon={<FileDown size={16} />}
+            loading={exporting}
+            onClick={() => onExport({ type: 'dead-stock', days: deadStockDays ?? undefined })}
+          >
+            导出呆滞库存
+          </Button>
+        </Space>
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>日/周/月报</Title>
+        <Segmented
+          value={range}
+          onChange={(value) => onRangeChange(value as ReportRange)}
+          options={[
+            { label: '日', value: 'day' },
+            { label: '周', value: 'week' },
+            { label: '月', value: 'month' },
+          ]}
+        />
+        <Table
+          size="small"
+          className="inventory-table"
+          loading={loading}
+          dataSource={periodRows}
+          rowKey="period"
+          pagination={false}
+          scroll={{ x: 760 }}
+          locale={{ emptyText: '暂无周期流水' }}
+          columns={[
+            { title: '周期', dataIndex: 'period' },
+            { title: '流水数', dataIndex: 'movement_count' },
+            { title: '入库', dataIndex: 'inbound_qty' },
+            { title: '出库', dataIndex: 'outbound_qty' },
+            { title: '调整', dataIndex: 'adjustment_qty' },
+            {
+              title: '净变动',
+              dataIndex: 'net_qty',
+              render: (value: number) => <Tag color={value >= 0 ? 'green' : 'red'}>{value}</Tag>,
+            },
+          ]}
+        />
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>呆滞库存</Title>
+        <div className="form-grid compact-grid">
+          <label>
+            无流水天数
+            <InputNumber
+              min={1}
+              max={3650}
+              precision={0}
+              value={deadStockDays}
+              onChange={onDeadStockDaysChange}
+              className="full-input"
+            />
+          </label>
+        </div>
+        <Table
+          size="small"
+          className="inventory-table"
+          loading={loading}
+          dataSource={deadStockRows}
+          rowKey="product_id"
+          pagination={false}
+          scroll={{ x: 760 }}
+          locale={{ emptyText: '暂无呆滞库存' }}
+          columns={[
+            {
+              title: '产品',
+              dataIndex: 'product_id',
+              render: (value: string, row) => (
+                <Space direction="vertical" size={0}>
+                  <Text strong>{value}</Text>
+                  <Text type="secondary">{row.product_name}</Text>
+                </Space>
+              ),
+            },
+            { title: '在库', dataIndex: 'qty_on_hand' },
+            {
+              title: '最近流水',
+              dataIndex: 'last_movement_at',
+              render: (value: string | null) => value ?? '无流水',
+            },
+            {
+              title: '呆滞天数',
+              dataIndex: 'idle_days',
+              render: (value: number | null) => value ?? '-',
+            },
+          ]}
+        />
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>库位利用率</Title>
+        <Table
+          size="small"
+          className="inventory-table"
+          loading={loading}
+          dataSource={slotUtilizationRows}
+          rowKey="warehouse_id"
+          pagination={false}
+          scroll={{ x: 680 }}
+          locale={{ emptyText: '暂无库位数据' }}
+          columns={[
+            {
+              title: '仓库',
+              dataIndex: 'warehouse_id',
+              render: (value: string, row) => (
+                <Space direction="vertical" size={0}>
+                  <Text strong>{value}</Text>
+                  <Text type="secondary">{row.warehouse_name}</Text>
+                </Space>
+              ),
+            },
+            { title: '总库位', dataIndex: 'total_slots' },
+            { title: '占用库位', dataIndex: 'occupied_slots' },
+            {
+              title: '利用率',
+              dataIndex: 'utilization_rate',
+              render: (value: number) => <Tag color={value >= 80 ? 'orange' : 'blue'}>{value}%</Tag>,
+            },
+          ]}
         />
       </section>
     </>

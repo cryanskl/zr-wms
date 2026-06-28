@@ -73,6 +73,10 @@ body {
   margin-top: 16px;
 }
 
+.compact-grid {
+  grid-template-columns: minmax(180px, 280px);
+}
+
 .form-grid label {
   display: grid;
   gap: 6px;

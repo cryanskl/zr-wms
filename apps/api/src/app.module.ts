@@ -13,6 +13,8 @@ import { ProductsController } from './products/products.controller';
 import { ProductsService } from './products/products.service';
 import { ReservationsController } from './reservations/reservations.controller';
 import { ReservationsService } from './reservations/reservations.service';
+import { ReportsController } from './reports/reports.controller';
+import { ReportsService } from './reports/reports.service';
 import { SearchController } from './search/search.controller';
 import { SearchService } from './search/search.service';
 import { StockController } from './stock/stock.controller';
@@ -38,6 +40,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
     OrdersController,
     ProductsController,
     ReservationsController,
+    ReportsController,
     StockController,
     StocktakesController,
     WarehousesController,
@@ -50,6 +53,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
     OrdersService,
     ProductsService,
     ReservationsService,
+    ReportsService,
     StockService,
     StocktakesService,
     WarehousesService,
