@@ -1,0 +1,171 @@
+%% 汽配 WMS 实体关系图 (ER Diagram)
+%% 版本 V1.7 | 2026-06-28
+%% 三条主线：主数据 / 库存真相(批次→快照→流水) / 业务单据(订单→明细→预留→盘点)
+%% 可在 https://mermaid.live 或任何支持 Mermaid 的编辑器中打开编辑
+
+erDiagram
+  PRODUCT ||--o{ PRODUCT_ALIAS : "别名"
+  PRODUCT ||--o{ PRODUCT_IMAGE : "图(≤3)"
+  PRODUCT ||--o| PRICE : "价格"
+  PRODUCT ||--o{ RECENT_USE : ""
+  PRODUCT ||--o{ BOM_LINE : "父项"
+  PRODUCT ||--o{ BOM_LINE : "子项"
+  PRODUCT ||--o{ BOM_PATH_ALIAS : "物料"
+  PRODUCT ||--o{ BATCH : "原料批次"
+  PRODUCT ||--o{ INVENTORY : ""
+  PRODUCT ||--o{ STOCK_MOVEMENT : ""
+  PRODUCT ||--o{ ORDER_LINE : ""
+  PRODUCT ||--o{ RESERVATION : ""
+  PRODUCT ||--o{ STOCKTAKE_LINE : ""
+  WAREHOUSE ||--o{ SLOT : "含"
+  WAREHOUSE ||--o{ INVENTORY : ""
+  SLOT ||--o{ INVENTORY : ""
+  SLOT ||--o{ STOCK_MOVEMENT : ""
+  SLOT ||--o{ RESERVATION : "人工指定"
+  SLOT ||--o{ STOCKTAKE_LINE : ""
+  BATCH ||--o{ INVENTORY : ""
+  BATCH ||--o{ STOCK_MOVEMENT : ""
+  ORDER ||--o{ ORDER_LINE : "明细"
+  ORDER ||--o{ RESERVATION : ""
+  ORDER ||--o{ STOCK_MOVEMENT : "采购到货"
+  STOCK_MOVEMENT ||--o| STOCK_MOVEMENT : "冲正"
+  STOCKTAKE ||--o{ STOCKTAKE_LINE : "明细"
+  APP_USER ||--o{ STOCK_MOVEMENT : "操作人"
+  APP_USER ||--o{ OPERATION_LOG : "操作人"
+  APP_USER ||--o{ ORDER : "创建"
+  APP_USER ||--o{ RECENT_USE : "按人"
+
+  PRODUCT {
+    string product_id PK "RM/SF/FG/配件 终身不变"
+    string type "产品类型"
+    string name "名称"
+    int safety_stock "安全库存(总量)"
+    bool active "软删停用"
+    string remark "备注"
+  }
+  PRODUCT_ALIAS {
+    string alias_id PK
+    string product_id FK
+    string alias_text "可跨产品重复"
+  }
+  PRODUCT_IMAGE {
+    string image_id PK
+    string product_id FK
+    string url "图片地址"
+    int seq "1-3"
+  }
+  PRICE {
+    string product_id PK "1:1"
+    decimal cost_in "入货"
+    decimal cost_process "加工"
+    decimal cost_loss "损耗"
+    decimal price_out "出货"
+  }
+  RECENT_USE {
+    string user_id PK "按人"
+    string product_id PK
+    string context "填写/订单"
+    datetime last_used_at "最近时间"
+  }
+  BOM_LINE {
+    string bom_line_id PK
+    string parent_product_id FK "父"
+    string child_product_id FK "子"
+    int qty "用量(数量)"
+    int seq "顺序 决定-1/-2"
+  }
+  BOM_PATH_ALIAS {
+    string path_alias_id PK
+    string product_id FK "指向物料"
+    string root_product_id FK "根 A/A2/B"
+    string path_text "如 A-1-1"
+  }
+  WAREHOUSE {
+    string warehouse_id PK
+    string name "名称"
+    string type "普通/模具/外协"
+    bool has_slots "外协=否"
+  }
+  SLOT {
+    string slot_id PK
+    string warehouse_id FK
+    string code "W1-R03-C12-L2-A"
+    string status "可用/占用/不可用/合并"
+    string merged_into FK "合并目标"
+  }
+  BATCH {
+    string batch_id PK
+    string product_id FK "仅原料"
+    string batch_no "进货批次"
+    date received_date "入库日期"
+  }
+  INVENTORY {
+    string inventory_id PK
+    string product_id FK
+    string warehouse_id FK
+    string slot_id FK "外协可空"
+    string batch_id FK "仅原料"
+    string quality "良/不良/不可用"
+    int qty_on_hand "在库"
+    int version "乐观锁"
+  }
+  STOCK_MOVEMENT {
+    string movement_id PK
+    string product_id FK
+    string slot_id FK
+    string batch_id FK
+    string type "入/出/移/调整/冲正"
+    int qty "带符号"
+    string ref_order_id FK "采购到货"
+    string reverses_id FK "冲正引用"
+    bool voided "作废"
+    datetime ts "时间/操作人"
+  }
+  OPERATION_LOG {
+    string log_id PK
+    string entity_type "对象类型"
+    string action "动作"
+    string operator FK
+    datetime ts "时间"
+  }
+  ORDER {
+    string order_id PK
+    string order_type "采购/生产"
+    string partner "客户/供应商"
+    date due_date "交期"
+    string status "表头状态"
+  }
+  ORDER_LINE {
+    string order_line_id PK
+    string order_id FK
+    string product_id FK
+    int qty "需求量"
+    int qty_done "已产出/到货"
+    string line_status "行级状态"
+  }
+  RESERVATION {
+    string reservation_id PK
+    string order_id FK
+    string product_id FK
+    string slot_id FK "人工指定"
+    int qty "冻结量"
+    string status "预留/释放/消耗"
+  }
+  APP_USER {
+    string user_id PK
+    string name "姓名"
+    string role "操作员/管理员/老板"
+  }
+  STOCKTAKE {
+    string stocktake_id PK
+    datetime created_at "发起时间"
+    string status "状态"
+  }
+  STOCKTAKE_LINE {
+    string stline_id PK
+    string stocktake_id FK
+    string product_id FK
+    string slot_id FK
+    int counted_qty "实盘数"
+    int diff "差异"
+  }

@@ -1,0 +1,25 @@
+{
+  "name": "zr-wms",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev": "pnpm --parallel dev",
+    "dev:api": "pnpm --filter @zr-wms/api dev",
+    "dev:web": "pnpm --filter @zr-wms/web dev",
+    "build": "pnpm --recursive build",
+    "typecheck": "pnpm --recursive typecheck",
+    "db:setup": "tsx scripts/setup-db.ts",
+    "db:setup:reset": "tsx scripts/setup-db.ts --reset-public-schema"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
