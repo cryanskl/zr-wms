@@ -6,6 +6,8 @@ import { AuthService } from './auth/auth.service';
 import { JwtStrategy } from './auth/jwt.strategy';
 import { RolesGuard } from './auth/roles.guard';
 import { HealthController } from './health.controller';
+import { ProductsController } from './products/products.controller';
+import { ProductsService } from './products/products.service';
 import { SearchController } from './search/search.controller';
 import { SearchService } from './search/search.service';
 import { StockController } from './stock/stock.controller';
@@ -19,7 +21,7 @@ import { StockService } from './stock/stock.service';
       signOptions: { expiresIn: '8h' },
     }),
   ],
-  controllers: [HealthController, SearchController, AuthController, StockController],
-  providers: [SearchService, AuthService, JwtStrategy, RolesGuard, StockService],
+  controllers: [HealthController, SearchController, AuthController, ProductsController, StockController],
+  providers: [SearchService, AuthService, JwtStrategy, RolesGuard, ProductsService, StockService],
 })
 export class AppModule {}

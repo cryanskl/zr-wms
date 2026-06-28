@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Empty, Form, Input, InputNumber, List, Modal, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
-import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Boxes, ClipboardList, LogOut } from 'lucide-react';
+import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Boxes, ClipboardList, LogOut, PackageSearch } from 'lucide-react';
 import { CurrentUser, login } from './authApi';
 import {
   getInventoryDashboard,
@@ -11,6 +11,20 @@ import {
   InventorySummary,
   LowStockRow,
 } from './inventoryApi';
+import {
+  addProductAlias,
+  addProductImage,
+  createProduct,
+  deleteProductAlias,
+  getProduct,
+  listProducts,
+  ProductDetail,
+  ProductInput,
+  ProductSummary,
+  ProductType,
+  softDeleteProduct,
+  updateProduct,
+} from './productApi';
 import {
   getInventory,
   getSlots,
@@ -42,7 +56,7 @@ export function App() {
     return raw ? (JSON.parse(raw) as { accessToken: string; user: CurrentUser }) : null;
   });
   const [selectedProduct, setSelectedProduct] = useState<SearchResult | null>(null);
-  const [activeView, setActiveView] = useState<'operations' | 'dashboard'>('operations');
+  const [activeView, setActiveView] = useState<'operations' | 'dashboard' | 'products'>('operations');
   const [operationType, setOperationType] = useState<'inbound' | 'outbound' | 'transfer'>('inbound');
   const [warehouse, setWarehouse] = useState('W1');
   const [toWarehouse, setToWarehouse] = useState('W1');
@@ -54,6 +68,12 @@ export function App() {
   const [dashboardProduct, setDashboardProduct] = useState('');
   const [dashboardWarehouse, setDashboardWarehouse] = useState<string | undefined>();
   const [dashboardQuality, setDashboardQuality] = useState<string | undefined>();
+  const [productTypeFilter, setProductTypeFilter] = useState<ProductType | undefined>();
+  const [productActiveFilter, setProductActiveFilter] = useState<boolean | undefined>(true);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [productDraft, setProductDraft] = useState<ProductInput>({ type: 'RM', name: '' });
+  const [aliasText, setAliasText] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
 
   const searchQuery = useQuery({
     queryKey: ['search', submittedQuery],
@@ -110,6 +130,18 @@ export function App() {
     queryKey: ['low-stock', token],
     queryFn: () => getLowStock(token),
     enabled: Boolean(token),
+  });
+
+  const productsQuery = useQuery({
+    queryKey: ['products', token, productTypeFilter, productActiveFilter],
+    queryFn: () => listProducts(token, { type: productTypeFilter, active: productActiveFilter }),
+    enabled: Boolean(token),
+  });
+
+  const productDetailQuery = useQuery({
+    queryKey: ['product-detail', token, selectedProductId],
+    queryFn: () => getProduct(token, selectedProductId ?? ''),
+    enabled: Boolean(token && selectedProductId),
   });
 
   const loginMutation = useMutation({
@@ -175,6 +207,7 @@ export function App() {
       void queryClient.invalidateQueries({ queryKey: ['inventory-dashboard'] });
       void queryClient.invalidateQueries({ queryKey: ['inventory-summary'] });
       void queryClient.invalidateQueries({ queryKey: ['low-stock'] });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
     },
     onError: (error) =>
       setNotice({ type: 'error', message: error instanceof Error ? error.message : '操作失败，请检查输入' }),
@@ -184,6 +217,70 @@ export function App() {
     value: item.warehouse_id,
     label: `${item.warehouse_id} ${item.name}`,
   }));
+  const canManageProducts = auth?.user.role === 'ADMIN' || auth?.user.role === 'BOSS';
+
+  const createProductMutation = useMutation({
+    mutationFn: () => createProduct(token, productDraft),
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已新增产品 ${data.product_id}` });
+      setSelectedProductId(data.product_id);
+      setProductDraft({ type: 'RM', name: '' });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '新增产品失败' }),
+  });
+
+  const updateProductMutation = useMutation({
+    mutationFn: () => updateProduct(token, selectedProductId ?? '', productDraft),
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已更新产品 ${data.product_id}` });
+      setSelectedProductId(data.product_id);
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '更新产品失败' }),
+  });
+
+  const softDeleteProductMutation = useMutation({
+    mutationFn: (productId: string) => softDeleteProduct(token, productId),
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已停用产品 ${data.product_id}` });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '停用产品失败' }),
+  });
+
+  const addAliasMutation = useMutation({
+    mutationFn: () => addProductAlias(token, selectedProductId ?? '', aliasText),
+    onSuccess: () => {
+      setAliasText('');
+      setNotice({ type: 'success', message: '已添加别名' });
+      void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '添加别名失败' }),
+  });
+
+  const deleteAliasMutation = useMutation({
+    mutationFn: (aliasId: number) => deleteProductAlias(token, selectedProductId ?? '', aliasId),
+    onSuccess: () => {
+      setNotice({ type: 'success', message: '已删除别名' });
+      void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '删除别名失败' }),
+  });
+
+  const addImageMutation = useMutation({
+    mutationFn: () => addProductImage(token, selectedProductId ?? '', imageUrl),
+    onSuccess: () => {
+      setImageUrl('');
+      setNotice({ type: 'success', message: '已添加产品图 URL' });
+      void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '添加产品图失败' }),
+  });
 
   const fromSlotOptions = useMemo(() => slotOptions(fromSlotsQuery.data), [fromSlotsQuery.data]);
   const toSlotOptions = useMemo(() => slotOptions(toSlotsQuery.data), [toSlotsQuery.data]);
@@ -241,10 +338,11 @@ export function App() {
           block
           className="view-switch"
           value={activeView}
-          onChange={(value) => setActiveView(value as 'operations' | 'dashboard')}
+          onChange={(value) => setActiveView(value as 'operations' | 'dashboard' | 'products')}
           options={[
             { label: '出入库', value: 'operations', icon: <ClipboardList size={16} /> },
             { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
+            { label: '产品管理', value: 'products', icon: <PackageSearch size={16} /> },
           ]}
         />
 
@@ -396,7 +494,7 @@ export function App() {
               <InventoryList rows={inventoryQuery.data ?? []} />
             </section>
           </>
-        ) : (
+        ) : activeView === 'dashboard' ? (
           <InventoryDashboard
             dashboardProduct={dashboardProduct}
             dashboardWarehouse={dashboardWarehouse}
@@ -417,6 +515,50 @@ export function App() {
             onProductChange={setDashboardProduct}
             onWarehouseChange={setDashboardWarehouse}
             onQualityChange={setDashboardQuality}
+          />
+        ) : (
+          <ProductManagement
+            canManage={canManageProducts}
+            products={productsQuery.data ?? []}
+            detail={productDetailQuery.data}
+            selectedProductId={selectedProductId}
+            productTypeFilter={productTypeFilter}
+            productActiveFilter={productActiveFilter}
+            productDraft={productDraft}
+            aliasText={aliasText}
+            imageUrl={imageUrl}
+            loading={productsQuery.isFetching || productDetailQuery.isFetching}
+            saving={
+              createProductMutation.isPending ||
+              updateProductMutation.isPending ||
+              softDeleteProductMutation.isPending ||
+              addAliasMutation.isPending ||
+              deleteAliasMutation.isPending ||
+              addImageMutation.isPending
+            }
+            onTypeFilterChange={setProductTypeFilter}
+            onActiveFilterChange={setProductActiveFilter}
+            onSelectProduct={(product) => {
+              setSelectedProductId(product.product_id);
+              setProductDraft(productToInput(product));
+            }}
+            onDraftChange={setProductDraft}
+            onAliasTextChange={setAliasText}
+            onImageUrlChange={setImageUrl}
+            onCreate={() => createProductMutation.mutate()}
+            onUpdate={() => updateProductMutation.mutate()}
+            onSoftDelete={(productId) =>
+              Modal.confirm({
+                title: '确认停用产品？',
+                content: '停用会将 active 设为 false，不会物理删除产品。',
+                okText: '停用',
+                cancelText: '取消',
+                onOk: () => softDeleteProductMutation.mutate(productId),
+              })
+            }
+            onAddAlias={() => addAliasMutation.mutate()}
+            onDeleteAlias={(aliasId) => deleteAliasMutation.mutate(aliasId)}
+            onAddImage={() => addImageMutation.mutate()}
           />
         )}
       </Card>
@@ -595,4 +737,281 @@ function InventoryDashboard({
       </section>
     </>
   );
+}
+
+interface ProductManagementProps {
+  canManage: boolean;
+  products: ProductSummary[];
+  detail: ProductDetail | undefined;
+  selectedProductId: string | null;
+  productTypeFilter: ProductType | undefined;
+  productActiveFilter: boolean | undefined;
+  productDraft: ProductInput;
+  aliasText: string;
+  imageUrl: string;
+  loading: boolean;
+  saving: boolean;
+  onTypeFilterChange: (value: ProductType | undefined) => void;
+  onActiveFilterChange: (value: boolean | undefined) => void;
+  onSelectProduct: (product: ProductSummary) => void;
+  onDraftChange: (value: ProductInput) => void;
+  onAliasTextChange: (value: string) => void;
+  onImageUrlChange: (value: string) => void;
+  onCreate: () => void;
+  onUpdate: () => void;
+  onSoftDelete: (productId: string) => void;
+  onAddAlias: () => void;
+  onDeleteAlias: (aliasId: number) => void;
+  onAddImage: () => void;
+}
+
+function ProductManagement({
+  canManage,
+  products,
+  detail,
+  selectedProductId,
+  productTypeFilter,
+  productActiveFilter,
+  productDraft,
+  aliasText,
+  imageUrl,
+  loading,
+  saving,
+  onTypeFilterChange,
+  onActiveFilterChange,
+  onSelectProduct,
+  onDraftChange,
+  onAliasTextChange,
+  onImageUrlChange,
+  onCreate,
+  onUpdate,
+  onSoftDelete,
+  onAddAlias,
+  onDeleteAlias,
+  onAddImage,
+}: ProductManagementProps) {
+  const productTypeOptions = [
+    { value: 'RM', label: 'RM 原材料' },
+    { value: 'SF', label: 'SF 半成品' },
+    { value: 'FG', label: 'FG 成品' },
+    { value: 'ACC', label: 'ACC 配件' },
+  ];
+
+  return (
+    <>
+      <section className="operation-panel">
+        <Title level={4}>产品主数据</Title>
+        <div className="form-grid">
+          <label>
+            类型
+            <Select
+              allowClear
+              value={productTypeFilter}
+              options={productTypeOptions}
+              placeholder="全部类型"
+              onChange={onTypeFilterChange}
+            />
+          </label>
+          <label>
+            状态
+            <Select
+              allowClear
+              value={productActiveFilter}
+              placeholder="全部状态"
+              onChange={onActiveFilterChange}
+              options={[
+                { value: true, label: '启用' },
+                { value: false, label: '停用' },
+              ]}
+            />
+          </label>
+        </div>
+
+        <Table
+          size="small"
+          className="inventory-table"
+          loading={loading}
+          dataSource={products}
+          rowKey="product_id"
+          pagination={false}
+          scroll={{ x: 780 }}
+          columns={[
+            {
+              title: '产品',
+              dataIndex: 'product_id',
+              render: (value: string, row) => (
+                <Button type="link" className="table-link-button" onClick={() => onSelectProduct(row)}>
+                  {value}
+                </Button>
+              ),
+            },
+            { title: '类型', dataIndex: 'type' },
+            { title: '名称', dataIndex: 'name' },
+            {
+              title: '安全库存',
+              dataIndex: 'safety_stock',
+              render: (value: number | null) => value ?? '-',
+            },
+            {
+              title: '状态',
+              dataIndex: 'active',
+              render: (value: boolean) => <Tag color={value ? 'green' : 'default'}>{value ? '启用' : '停用'}</Tag>,
+            },
+          ]}
+        />
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>产品编辑</Title>
+        {!canManage && <Alert className="form-alert" type="info" showIcon message="当前角色只能查看产品和维护别名" />}
+        <div className="form-grid">
+          <label>
+            产品 ID
+            <Input
+              disabled={!canManage}
+              value={productDraft.product_id ?? ''}
+              placeholder="留空自动生成"
+              onChange={(event) => onDraftChange({ ...productDraft, product_id: event.target.value })}
+            />
+          </label>
+          <label>
+            类型
+            <Select
+              disabled={!canManage}
+              value={productDraft.type}
+              options={productTypeOptions}
+              onChange={(value) => onDraftChange({ ...productDraft, type: value })}
+            />
+          </label>
+          <label>
+            名称
+            <Input
+              disabled={!canManage}
+              value={productDraft.name}
+              onChange={(event) => onDraftChange({ ...productDraft, name: event.target.value })}
+            />
+          </label>
+          <label>
+            安全库存
+            <InputNumber
+              disabled={!canManage}
+              className="full-input"
+              min={0}
+              value={productDraft.safety_stock ?? null}
+              onChange={(value) => onDraftChange({ ...productDraft, safety_stock: value })}
+            />
+          </label>
+          <label>
+            备注
+            <Input
+              disabled={!canManage}
+              value={productDraft.remark ?? ''}
+              onChange={(event) => onDraftChange({ ...productDraft, remark: event.target.value })}
+            />
+          </label>
+        </div>
+
+        <Space className="action-row" wrap>
+          <Button
+            disabled={!canManage}
+            type="primary"
+            loading={saving}
+            onClick={onCreate}
+          >
+            新增产品
+          </Button>
+          <Button disabled={!canManage || !selectedProductId} loading={saving} onClick={onUpdate}>
+            更新当前产品
+          </Button>
+          <Button
+            danger
+            disabled={!canManage || !selectedProductId}
+            loading={saving}
+            onClick={() => selectedProductId && onSoftDelete(selectedProductId)}
+          >
+            停用当前产品
+          </Button>
+        </Space>
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>别名与图片</Title>
+        {detail ? (
+          <>
+            <Text strong>{detail.product_id} / {detail.name}</Text>
+            <div className="form-grid">
+              <label>
+                新别名
+                <Input value={aliasText} onChange={(event) => onAliasTextChange(event.target.value)} />
+              </label>
+              <label>
+                图片 URL
+                <Input disabled={!canManage} value={imageUrl} onChange={(event) => onImageUrlChange(event.target.value)} />
+              </label>
+            </div>
+            <Space className="action-row" wrap>
+              <Button loading={saving} onClick={onAddAlias}>
+                添加别名
+              </Button>
+              <Button disabled={!canManage} loading={saving} onClick={onAddImage}>
+                添加图片 URL
+              </Button>
+            </Space>
+
+            <List
+              className="warning-list"
+              header="人工别名"
+              dataSource={detail.aliases}
+              locale={{ emptyText: '暂无别名' }}
+              renderItem={(item) => (
+                <List.Item
+                  actions={[
+                    <Button key="delete" size="small" danger onClick={() => onDeleteAlias(item.alias_id)}>
+                      删除
+                    </Button>,
+                  ]}
+                >
+                  {item.alias_text}
+                </List.Item>
+              )}
+            />
+            <List
+              className="warning-list"
+              header="产品图 URL"
+              dataSource={detail.images}
+              locale={{ emptyText: '暂无图片' }}
+              renderItem={(item) => (
+                <List.Item>
+                  <Text ellipsis>{item.seq}. {item.url}</Text>
+                </List.Item>
+              )}
+            />
+            <List
+              className="warning-list"
+              header="路径别名"
+              dataSource={detail.path_aliases}
+              locale={{ emptyText: '暂无路径别名' }}
+              renderItem={(item) => <List.Item>{item.path_text}</List.Item>}
+            />
+          </>
+        ) : (
+          <Empty description="选择一个产品后查看详情" />
+        )}
+      </section>
+    </>
+  );
+}
+
+function productToInput(product: ProductSummary): ProductInput {
+  return {
+    product_id: product.product_id,
+    type: product.type,
+    name: product.name,
+    has_tube: product.has_tube,
+    has_alu_plate: product.has_alu_plate,
+    has_dust_cover: product.has_dust_cover,
+    attrs: product.attrs,
+    safety_stock: product.safety_stock,
+    remark: product.remark,
+  };
 }

@@ -1,0 +1,319 @@
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { queryDatabase } from '../database';
+import {
+  buildAddAliasQuery,
+  buildAddImageQuery,
+  buildCreateProductQuery,
+  buildDeleteAliasQuery,
+  buildProductDetailQuery,
+  buildProductListQuery,
+  buildSoftDeleteProductQuery,
+  buildUpdateProductQuery,
+} from './product-queries';
+
+type ProductType = 'RM' | 'SF' | 'FG' | 'ACC';
+
+export interface ProductBody {
+  product_id?: string;
+  type?: ProductType;
+  name?: string;
+  has_tube?: boolean;
+  has_alu_plate?: boolean;
+  has_dust_cover?: boolean;
+  attrs?: Record<string, unknown>;
+  safety_stock?: number | string | null;
+  remark?: string | null;
+}
+
+export interface AliasBody {
+  alias_text?: string;
+}
+
+export interface ImageBody {
+  url?: string;
+  seq?: number | string;
+}
+
+interface ProductRow {
+  product_id: string;
+  type: ProductType;
+  name: string;
+  has_tube: boolean;
+  has_alu_plate: boolean;
+  has_dust_cover: boolean;
+  attrs: string;
+  safety_stock: string | null;
+  remark: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AliasRow {
+  alias_id: string;
+  product_id: string;
+  alias_text: string;
+  created_at: string;
+}
+
+interface ImageRow {
+  image_id: string;
+  product_id: string;
+  url: string;
+  seq: number;
+}
+
+interface PathAliasRow {
+  path_alias_id: string;
+  product_id: string;
+  root_product_id: string;
+  path_text: string;
+  generated_at: string;
+}
+
+interface IdRow {
+  product_id?: string;
+  alias_id?: string;
+}
+
+interface CountRow {
+  count: string;
+}
+
+@Injectable()
+export class ProductsService {
+  async list(filters: { type?: string; active?: string }) {
+    const result = await queryDatabase<ProductRow>(buildProductListQuery().text, [
+      filters.type || null,
+      parseOptionalBoolean(filters.active),
+    ]);
+    return result.rows.map(mapProductRow);
+  }
+
+  async detail(productId: string) {
+    const queries = buildProductDetailQuery();
+    const productResult = await queryDatabase<ProductRow>(queries.product.text, [productId]);
+    const product = productResult.rows[0];
+    if (!product) {
+      throw new NotFoundException('产品不存在');
+    }
+
+    const [aliasesResult, imagesResult, pathAliasesResult] = await Promise.all([
+      queryDatabase<AliasRow>(queries.aliases.text, [productId]),
+      queryDatabase<ImageRow>(queries.images.text, [productId]),
+      queryDatabase<PathAliasRow>(queries.pathAliases.text, [productId]),
+    ]);
+
+    return {
+      ...mapProductRow(product),
+      aliases: aliasesResult.rows.map(mapAliasRow),
+      images: imagesResult.rows.map(mapImageRow),
+      path_aliases: pathAliasesResult.rows.map((row) => ({
+        path_alias_id: Number(row.path_alias_id),
+        product_id: row.product_id,
+        root_product_id: row.root_product_id,
+        path_text: row.path_text,
+        generated_at: row.generated_at,
+      })),
+    };
+  }
+
+  async create(body: ProductBody, operatorId: number) {
+    const type = requireProductType(body.type);
+    const name = requireText(body.name, '产品名称不能为空');
+    const productId = normalizeProductId(body.product_id) ?? generateProductId(type);
+
+    try {
+      const result = await queryDatabase<IdRow>(buildCreateProductQuery().text, [
+        productId,
+        type,
+        name,
+        Boolean(body.has_tube),
+        Boolean(body.has_alu_plate),
+        Boolean(body.has_dust_cover),
+        JSON.stringify(body.attrs ?? {}),
+        nullableNumber(body.safety_stock),
+        nullableText(body.remark),
+        operatorId,
+      ]);
+
+      return { product_id: result.rows[0].product_id };
+    } catch (error) {
+      mapProductError(error);
+    }
+  }
+
+  async update(productId: string, body: ProductBody, operatorId: number) {
+    const current = await this.detail(productId);
+    const nextProductId = normalizeProductId(body.product_id) ?? productId;
+    const nextType = body.type ?? current.type;
+    const nextName = requireText(body.name ?? current.name, '产品名称不能为空');
+
+    try {
+      const result = await queryDatabase<IdRow>(buildUpdateProductQuery().text, [
+        productId,
+        nextProductId,
+        nextType,
+        nextName,
+        body.has_tube ?? current.has_tube,
+        body.has_alu_plate ?? current.has_alu_plate,
+        body.has_dust_cover ?? current.has_dust_cover,
+        JSON.stringify(body.attrs ?? current.attrs),
+        body.safety_stock === undefined ? current.safety_stock : nullableNumber(body.safety_stock),
+        body.remark === undefined ? current.remark : nullableText(body.remark),
+        operatorId,
+      ]);
+
+      return { product_id: result.rows[0].product_id };
+    } catch (error) {
+      mapProductError(error);
+    }
+  }
+
+  async softDelete(productId: string, operatorId: number) {
+    const result = await queryDatabase<IdRow>(buildSoftDeleteProductQuery().text, [productId, operatorId]);
+    if (!result.rows[0]) {
+      throw new NotFoundException('产品不存在');
+    }
+    return { product_id: result.rows[0].product_id };
+  }
+
+  async addAlias(productId: string, body: AliasBody, operatorId: number) {
+    const aliasText = requireText(body.alias_text, '别名不能为空');
+    const count = await countRows('SELECT count(*)::text AS count FROM product_alias WHERE product_id = $1', [productId]);
+    if (count >= 10) {
+      throw new ConflictException('每个产品最多 10 个别名');
+    }
+
+    try {
+      const result = await queryDatabase<AliasRow>(buildAddAliasQuery().text, [productId, aliasText, operatorId]);
+      return mapAliasRow(result.rows[0]);
+    } catch (error) {
+      mapProductError(error);
+    }
+  }
+
+  async deleteAlias(productId: string, aliasId: string) {
+    const result = await queryDatabase<IdRow>(buildDeleteAliasQuery().text, [productId, aliasId]);
+    if (!result.rows[0]) {
+      throw new NotFoundException('别名不存在');
+    }
+    return { alias_id: Number(result.rows[0].alias_id) };
+  }
+
+  async addImage(productId: string, body: ImageBody) {
+    const url = requireText(body.url, '图片 URL 不能为空');
+    const count = await countRows('SELECT count(*)::text AS count FROM product_image WHERE product_id = $1', [productId]);
+    if (count >= 3) {
+      throw new ConflictException('每个产品最多 3 张图片');
+    }
+
+    try {
+      const seq = body.seq === undefined || body.seq === null || body.seq === '' ? count + 1 : Number(body.seq);
+      const result = await queryDatabase<ImageRow>(buildAddImageQuery().text, [productId, url, seq]);
+      return mapImageRow(result.rows[0]);
+    } catch (error) {
+      mapProductError(error);
+    }
+  }
+}
+
+function mapProductRow(row: ProductRow) {
+  return {
+    product_id: row.product_id,
+    type: row.type,
+    name: row.name,
+    has_tube: row.has_tube,
+    has_alu_plate: row.has_alu_plate,
+    has_dust_cover: row.has_dust_cover,
+    attrs: JSON.parse(row.attrs || '{}') as Record<string, unknown>,
+    safety_stock: row.safety_stock === null ? null : Number(row.safety_stock),
+    remark: row.remark,
+    active: row.active,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function mapAliasRow(row: AliasRow) {
+  return {
+    alias_id: Number(row.alias_id),
+    product_id: row.product_id,
+    alias_text: row.alias_text,
+    created_at: row.created_at,
+  };
+}
+
+function mapImageRow(row: ImageRow) {
+  return {
+    image_id: Number(row.image_id),
+    product_id: row.product_id,
+    url: row.url,
+    seq: row.seq,
+  };
+}
+
+async function countRows(text: string, values: unknown[]) {
+  const result = await queryDatabase<CountRow>(text, values);
+  return Number(result.rows[0]?.count ?? 0);
+}
+
+function parseOptionalBoolean(value: string | undefined) {
+  if (value === undefined || value === '') {
+    return null;
+  }
+  return value === 'true';
+}
+
+function nullableNumber(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  return Number(value);
+}
+
+function nullableText(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  return value.trim();
+}
+
+function requireText(value: unknown, message: string) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new BadRequestException(message);
+  }
+  return value.trim();
+}
+
+function normalizeProductId(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  return value.trim().toUpperCase();
+}
+
+function requireProductType(value: unknown): ProductType {
+  if (value === 'RM' || value === 'SF' || value === 'FG' || value === 'ACC') {
+    return value;
+  }
+  throw new BadRequestException('产品类型必须是 RM/SF/FG/ACC');
+}
+
+function generateProductId(type: ProductType) {
+  return `${type}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
+function mapProductError(error: unknown): never {
+  const pgError = error as { code?: string; message?: string };
+  if (pgError.code === '23505') {
+    throw new ConflictException('产品编码、别名或图片序号重复');
+  }
+  if (pgError.code === '23503') {
+    throw new ConflictException('产品已被库存、流水、BOM 或其他业务数据引用，无法直接改编码');
+  }
+  if (pgError.code === '23514' || pgError.code === '22P02') {
+    throw new BadRequestException(pgError.message ?? '产品数据不合法');
+  }
+  throw error;
+}
