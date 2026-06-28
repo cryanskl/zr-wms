@@ -17,6 +17,8 @@ import { SearchController } from './search/search.controller';
 import { SearchService } from './search/search.service';
 import { StockController } from './stock/stock.controller';
 import { StockService } from './stock/stock.service';
+import { StocktakesController } from './stocktakes/stocktakes.controller';
+import { StocktakesService } from './stocktakes/stocktakes.service';
 import { WarehousesController } from './warehouses/warehouses.controller';
 import { WarehousesService } from './warehouses/warehouses.service';
 
@@ -37,6 +39,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
     ProductsController,
     ReservationsController,
     StockController,
+    StocktakesController,
     WarehousesController,
   ],
   providers: [
@@ -48,6 +51,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
     ProductsService,
     ReservationsService,
     StockService,
+    StocktakesService,
     WarehousesService,
   ],
 })

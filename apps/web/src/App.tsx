@@ -6,6 +6,7 @@ import {
   ArrowRightLeft,
   ArrowUpFromLine,
   Boxes,
+  ClipboardCheck,
   ClipboardList,
   LogOut,
   MapPinned,
@@ -91,8 +92,16 @@ import {
   WarehouseInput,
   WarehouseType,
 } from './warehouseApi';
+import {
+  addStocktakeLine,
+  applyStocktakeLine,
+  createStocktake,
+  Stocktake,
+  StocktakeLine,
+} from './stocktakeApi';
 
 const { Title, Paragraph, Text } = Typography;
+type ActiveView = 'operations' | 'dashboard' | 'products' | 'warehouses' | 'orders' | 'stocktakes';
 
 const matchedLabels: Record<SearchResult['matched'], string> = {
   name: '产品名',
@@ -110,7 +119,7 @@ export function App() {
     return raw ? (JSON.parse(raw) as { accessToken: string; user: CurrentUser }) : null;
   });
   const [selectedProduct, setSelectedProduct] = useState<SearchResult | null>(null);
-  const [activeView, setActiveView] = useState<'operations' | 'dashboard' | 'products' | 'warehouses' | 'orders'>('operations');
+  const [activeView, setActiveView] = useState<ActiveView>('operations');
   const [operationType, setOperationType] = useState<'inbound' | 'outbound' | 'transfer'>('inbound');
   const [warehouse, setWarehouse] = useState('W1');
   const [toWarehouse, setToWarehouse] = useState('W1');
@@ -170,6 +179,13 @@ export function App() {
   const [receiveQty, setReceiveQty] = useState<number | null>(1);
   const [receiveBatchId, setReceiveBatchId] = useState<number | null>(null);
   const [receiveReason, setReceiveReason] = useState('采购到货');
+  const [currentStocktake, setCurrentStocktake] = useState<Stocktake | null>(null);
+  const [stocktakeLines, setStocktakeLines] = useState<StocktakeLine[]>([]);
+  const [stocktakeWarehouse, setStocktakeWarehouse] = useState('W1');
+  const [stocktakeProductId, setStocktakeProductId] = useState('');
+  const [stocktakeSlotId, setStocktakeSlotId] = useState<number | null>(null);
+  const [stocktakeCountedQty, setStocktakeCountedQty] = useState<number | null>(0);
+  const [stocktakeBatchId, setStocktakeBatchId] = useState<number | null>(null);
 
   const searchQuery = useQuery({
     queryKey: ['search', submittedQuery],
@@ -304,6 +320,12 @@ export function App() {
     queryKey: ['slots', token, receiveWarehouse],
     queryFn: () => getSlots(token, receiveWarehouse),
     enabled: Boolean(token && receiveWarehouse),
+  });
+
+  const stocktakeSlotsQuery = useQuery({
+    queryKey: ['slots', token, stocktakeWarehouse],
+    queryFn: () => getSlots(token, stocktakeWarehouse),
+    enabled: Boolean(token && stocktakeWarehouse),
   });
 
   useEffect(() => {
@@ -640,6 +662,53 @@ export function App() {
     onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '到货失败' }),
   });
 
+  const createStocktakeMutation = useMutation({
+    mutationFn: () => createStocktake(token, { warehouse_id: stocktakeWarehouse }),
+    onSuccess: (stocktake) => {
+      setCurrentStocktake(stocktake);
+      setStocktakeLines([]);
+      setNotice({ type: 'success', message: `已发起盘点 #${stocktake.stocktake_id}` });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '发起盘点失败' }),
+  });
+
+  const addStocktakeLineMutation = useMutation({
+    mutationFn: () => {
+      if (!currentStocktake || !stocktakeProductId.trim() || !stocktakeSlotId || stocktakeCountedQty === null) {
+        throw new Error('请选择盘点单、产品、库位并填写实盘数量');
+      }
+      return addStocktakeLine(token, currentStocktake.stocktake_id, {
+        product_id: stocktakeProductId.trim().toUpperCase(),
+        slot_id: stocktakeSlotId,
+        counted_qty: stocktakeCountedQty,
+        batch_id: stocktakeBatchId,
+      });
+    },
+    onSuccess: (line) => {
+      setStocktakeLines((lines) => [...lines, line]);
+      setStocktakeProductId('');
+      setStocktakeCountedQty(0);
+      setStocktakeBatchId(null);
+      setNotice({ type: 'success', message: `已录入盘点明细 #${line.stline_id}` });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '录入盘点明细失败' }),
+  });
+
+  const applyStocktakeLineMutation = useMutation({
+    mutationFn: (stlineId: number) => applyStocktakeLine(token, stlineId),
+    onSuccess: (data) => {
+      setStocktakeLines((lines) =>
+        lines.map((line) => (line.stline_id === data.stline_id ? { ...line, adj_movement_id: data.movement_id ?? 0 } : line)),
+      );
+      setNotice({ type: 'success', message: data.movement_id ? `已应用盘点调整，流水 ${data.movement_id}` : '账实一致，无需调整' });
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['low-stock'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '应用盘点失败' }),
+  });
+
   const fromSlotOptions = useMemo(() => slotOptions(fromSlotsQuery.data), [fromSlotsQuery.data]);
   const toSlotOptions = useMemo(() => slotOptions(toSlotsQuery.data), [toSlotsQuery.data]);
 
@@ -696,10 +765,11 @@ export function App() {
           block
           className="view-switch"
           value={activeView}
-          onChange={(value) => setActiveView(value as 'operations' | 'dashboard' | 'products' | 'warehouses' | 'orders')}
+          onChange={(value) => setActiveView(value as ActiveView)}
           options={[
             { label: '出入库', value: 'operations', icon: <ClipboardList size={16} /> },
             { label: '订单', value: 'orders', icon: <ScrollText size={16} /> },
+            { label: '盘点', value: 'stocktakes', icon: <ClipboardCheck size={16} /> },
             { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
             { label: '产品管理', value: 'products', icon: <PackageSearch size={16} /> },
             { label: '仓库库位', value: 'warehouses', icon: <MapPinned size={16} /> },
@@ -948,6 +1018,39 @@ export function App() {
             }
             onReleaseReservation={(reservationId) => releaseReservationMutation.mutate(reservationId)}
           />
+        ) : activeView === 'stocktakes' ? (
+          <StocktakeManagement
+            canApply={isAdmin}
+            currentStocktake={currentStocktake}
+            lines={stocktakeLines}
+            warehouse={stocktakeWarehouse}
+            productId={stocktakeProductId}
+            slotId={stocktakeSlotId}
+            countedQty={stocktakeCountedQty}
+            batchId={stocktakeBatchId}
+            warehouseOptions={warehouseOptions}
+            slotOptions={slotOptions(stocktakeSlotsQuery.data)}
+            saving={createStocktakeMutation.isPending || addStocktakeLineMutation.isPending || applyStocktakeLineMutation.isPending}
+            onWarehouseChange={(value) => {
+              setStocktakeWarehouse(value);
+              setStocktakeSlotId(null);
+            }}
+            onProductIdChange={setStocktakeProductId}
+            onSlotIdChange={setStocktakeSlotId}
+            onCountedQtyChange={setStocktakeCountedQty}
+            onBatchIdChange={setStocktakeBatchId}
+            onCreateStocktake={() => createStocktakeMutation.mutate()}
+            onAddLine={() => addStocktakeLineMutation.mutate()}
+            onApplyLine={(stlineId) =>
+              Modal.confirm({
+                title: '确认应用盘点？',
+                content: '应用后会调用 op_apply_stocktake_line，把库存归到实盘数。',
+                okText: '应用盘点',
+                cancelText: '取消',
+                onOk: () => applyStocktakeLineMutation.mutate(stlineId),
+              })
+            }
+          />
         ) : activeView === 'dashboard' ? (
           <InventoryDashboard
             dashboardProduct={dashboardProduct}
@@ -1123,6 +1226,143 @@ function InventoryList({ rows }: { rows: InventoryRow[] }) {
         </List.Item>
       )}
     />
+  );
+}
+
+interface StocktakeManagementProps {
+  canApply: boolean;
+  currentStocktake: Stocktake | null;
+  lines: StocktakeLine[];
+  warehouse: string;
+  productId: string;
+  slotId: number | null;
+  countedQty: number | null;
+  batchId: number | null;
+  warehouseOptions: Array<{ value: string; label: string }>;
+  slotOptions: Array<{ value: number; label: string }>;
+  saving: boolean;
+  onWarehouseChange: (value: string) => void;
+  onProductIdChange: (value: string) => void;
+  onSlotIdChange: (value: number | null) => void;
+  onCountedQtyChange: (value: number | null) => void;
+  onBatchIdChange: (value: number | null) => void;
+  onCreateStocktake: () => void;
+  onAddLine: () => void;
+  onApplyLine: (stlineId: number) => void;
+}
+
+function StocktakeManagement({
+  canApply,
+  currentStocktake,
+  lines,
+  warehouse,
+  productId,
+  slotId,
+  countedQty,
+  batchId,
+  warehouseOptions,
+  slotOptions,
+  saving,
+  onWarehouseChange,
+  onProductIdChange,
+  onSlotIdChange,
+  onCountedQtyChange,
+  onBatchIdChange,
+  onCreateStocktake,
+  onAddLine,
+  onApplyLine,
+}: StocktakeManagementProps) {
+  return (
+    <>
+      <section className="operation-panel">
+        <Title level={4}>发起盘点</Title>
+        <div className="form-grid">
+          <label>
+            仓库
+            <Select value={warehouse} options={warehouseOptions} onChange={onWarehouseChange} />
+          </label>
+        </div>
+        <Space className="action-row" wrap>
+          <Button type="primary" loading={saving} onClick={onCreateStocktake}>
+            发起盘点
+          </Button>
+        </Space>
+        <div className="selected-product">
+          {currentStocktake
+            ? `当前盘点 #${currentStocktake.stocktake_id} / ${currentStocktake.warehouse_id ?? '全仓'} / ${currentStocktake.status}`
+            : '尚未发起盘点'}
+        </div>
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>录入实盘</Title>
+        <div className="form-grid">
+          <label>
+            产品 ID
+            <Input value={productId} placeholder="例如 RM-0123" onChange={(event) => onProductIdChange(event.target.value)} />
+          </label>
+          <label>
+            库位
+            <Select value={slotId} options={slotOptions} placeholder="选择库位" onChange={onSlotIdChange} />
+          </label>
+          <label>
+            实盘数量
+            <InputNumber min={0} value={countedQty} onChange={onCountedQtyChange} className="full-input" />
+          </label>
+          <label>
+            批次 ID
+            <InputNumber min={1} precision={0} value={batchId} onChange={onBatchIdChange} className="full-input" />
+          </label>
+        </div>
+        <Space className="action-row" wrap>
+          <Button type="primary" disabled={!currentStocktake} loading={saving} onClick={onAddLine}>
+            录入明细
+          </Button>
+        </Space>
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>盘点明细</Title>
+        {!canApply && <Alert type="info" showIcon message="操作员可录入盘点，应用调整需要管理员。" />}
+        <Table
+          size="small"
+          className="inventory-table"
+          dataSource={lines}
+          rowKey="stline_id"
+          pagination={false}
+          scroll={{ x: 920 }}
+          locale={{ emptyText: '暂无盘点明细' }}
+          columns={[
+            { title: '明细', dataIndex: 'stline_id' },
+            { title: '产品', dataIndex: 'product_id' },
+            { title: '库位', dataIndex: 'slot_id' },
+            { title: '账面', dataIndex: 'system_qty' },
+            { title: '实盘', dataIndex: 'counted_qty' },
+            {
+              title: '差异',
+              dataIndex: 'diff',
+              render: (value: number | null) => <Tag color={(value ?? 0) === 0 ? 'green' : 'red'}>{value ?? '-'}</Tag>,
+            },
+            {
+              title: '调整流水',
+              dataIndex: 'adj_movement_id',
+              render: (value: number | null) => (value === 0 ? '无需调整' : value ?? '-'),
+            },
+            {
+              title: '操作',
+              render: (_, row: StocktakeLine) =>
+                canApply && row.adj_movement_id === null ? (
+                  <Button size="small" loading={saving} onClick={() => onApplyLine(row.stline_id)}>
+                    应用
+                  </Button>
+                ) : (
+                  '-'
+                ),
+            },
+          ]}
+        />
+      </section>
+    </>
   );
 }
 
