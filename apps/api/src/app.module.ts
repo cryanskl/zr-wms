@@ -6,6 +6,8 @@ import { AuthService } from './auth/auth.service';
 import { JwtStrategy } from './auth/jwt.strategy';
 import { RolesGuard } from './auth/roles.guard';
 import { HealthController } from './health.controller';
+import { OrdersController } from './orders/orders.controller';
+import { OrdersService } from './orders/orders.service';
 import { BomController } from './products/bom.controller';
 import { ProductsController } from './products/products.controller';
 import { ProductsService } from './products/products.service';
@@ -29,10 +31,20 @@ import { WarehousesService } from './warehouses/warehouses.service';
     SearchController,
     AuthController,
     BomController,
+    OrdersController,
     ProductsController,
     StockController,
     WarehousesController,
   ],
-  providers: [SearchService, AuthService, JwtStrategy, RolesGuard, ProductsService, StockService, WarehousesService],
+  providers: [
+    SearchService,
+    AuthService,
+    JwtStrategy,
+    RolesGuard,
+    OrdersService,
+    ProductsService,
+    StockService,
+    WarehousesService,
+  ],
 })
 export class AppModule {}

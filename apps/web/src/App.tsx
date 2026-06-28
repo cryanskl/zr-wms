@@ -10,6 +10,7 @@ import {
   LogOut,
   MapPinned,
   PackageSearch,
+  ScrollText,
 } from 'lucide-react';
 import { CurrentUser, login } from './authApi';
 import {
@@ -56,6 +57,17 @@ import {
   Slot,
   transfer,
 } from './operationsApi';
+import {
+  createOrder,
+  getOrder,
+  listOrders,
+  OrderDetail,
+  OrderInput,
+  OrderLineInput,
+  OrderSummary,
+  OrderType,
+  patchOrder,
+} from './orderApi';
 import { SearchResult, searchProducts } from './searchApi';
 import {
   createWarehouse,
@@ -88,7 +100,7 @@ export function App() {
     return raw ? (JSON.parse(raw) as { accessToken: string; user: CurrentUser }) : null;
   });
   const [selectedProduct, setSelectedProduct] = useState<SearchResult | null>(null);
-  const [activeView, setActiveView] = useState<'operations' | 'dashboard' | 'products' | 'warehouses'>('operations');
+  const [activeView, setActiveView] = useState<'operations' | 'dashboard' | 'products' | 'warehouses' | 'orders'>('operations');
   const [operationType, setOperationType] = useState<'inbound' | 'outbound' | 'transfer'>('inbound');
   const [warehouse, setWarehouse] = useState('W1');
   const [toWarehouse, setToWarehouse] = useState('W1');
@@ -125,6 +137,18 @@ export function App() {
   const [slotStatus, setSlotStatus] = useState<SlotStatus>('AVAILABLE');
   const [slotReason, setSlotReason] = useState('');
   const [slotMergedInto, setSlotMergedInto] = useState<number | null>(null);
+  const [orderTypeFilter, setOrderTypeFilter] = useState<OrderType | undefined>();
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string | undefined>();
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
+  const [orderDraft, setOrderDraft] = useState<OrderInput>({
+    order_type: 'PRODUCTION',
+    partner: '',
+    due_date: null,
+    lines: [],
+  });
+  const [orderLineProductId, setOrderLineProductId] = useState('');
+  const [orderLineQty, setOrderLineQty] = useState<number | null>(1);
+  const [orderPatch, setOrderPatch] = useState({ partner: '', due_date: '', status: 'PENDING' });
 
   const searchQuery = useQuery({
     queryKey: ['search', submittedQuery],
@@ -225,11 +249,33 @@ export function App() {
     enabled: Boolean(token && selectedWarehouseId),
   });
 
+  const ordersQuery = useQuery({
+    queryKey: ['orders', token, orderTypeFilter, orderStatusFilter],
+    queryFn: () => listOrders(token, { type: orderTypeFilter, status: orderStatusFilter }),
+    enabled: Boolean(token),
+  });
+
+  const orderDetailQuery = useQuery({
+    queryKey: ['order-detail', token, selectedOrderId],
+    queryFn: () => getOrder(token, selectedOrderId ?? 0),
+    enabled: Boolean(token && selectedOrderId),
+  });
+
   useEffect(() => {
     if (bomQuery.data) {
       setBomDraftRows(bomQuery.data.map((line) => ({ child_product_id: line.child_product_id, qty: line.qty, seq: line.seq })));
     }
   }, [bomQuery.data]);
+
+  useEffect(() => {
+    if (orderDetailQuery.data) {
+      setOrderPatch({
+        partner: orderDetailQuery.data.partner ?? '',
+        due_date: orderDetailQuery.data.due_date ?? '',
+        status: orderDetailQuery.data.status,
+      });
+    }
+  }, [orderDetailQuery.data]);
 
   const loginMutation = useMutation({
     mutationFn: login,
@@ -436,6 +482,33 @@ export function App() {
     onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '更新库位失败' }),
   });
 
+  const createOrderMutation = useMutation({
+    mutationFn: () => createOrder(token, orderDraft),
+    onSuccess: (order) => {
+      setNotice({ type: 'success', message: `已创建订单 #${order.order_id}` });
+      setSelectedOrderId(order.order_id);
+      setOrderDraft({ order_type: 'PRODUCTION', partner: '', due_date: null, lines: [] });
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['order-detail'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '创建订单失败' }),
+  });
+
+  const patchOrderMutation = useMutation({
+    mutationFn: () =>
+      patchOrder(token, selectedOrderId ?? 0, {
+        partner: orderPatch.partner || null,
+        due_date: orderPatch.due_date || null,
+        status: orderPatch.status,
+      }),
+    onSuccess: (order) => {
+      setNotice({ type: 'success', message: `已更新订单 #${order.order_id}` });
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['order-detail'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '更新订单失败' }),
+  });
+
   const fromSlotOptions = useMemo(() => slotOptions(fromSlotsQuery.data), [fromSlotsQuery.data]);
   const toSlotOptions = useMemo(() => slotOptions(toSlotsQuery.data), [toSlotsQuery.data]);
 
@@ -492,9 +565,10 @@ export function App() {
           block
           className="view-switch"
           value={activeView}
-          onChange={(value) => setActiveView(value as 'operations' | 'dashboard' | 'products' | 'warehouses')}
+          onChange={(value) => setActiveView(value as 'operations' | 'dashboard' | 'products' | 'warehouses' | 'orders')}
           options={[
             { label: '出入库', value: 'operations', icon: <ClipboardList size={16} /> },
+            { label: '订单', value: 'orders', icon: <ScrollText size={16} /> },
             { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
             { label: '产品管理', value: 'products', icon: <PackageSearch size={16} /> },
             { label: '仓库库位', value: 'warehouses', icon: <MapPinned size={16} /> },
@@ -649,6 +723,44 @@ export function App() {
               <InventoryList rows={inventoryQuery.data ?? []} />
             </section>
           </>
+        ) : activeView === 'orders' ? (
+          <OrderManagement
+            orders={ordersQuery.data ?? []}
+            detail={orderDetailQuery.data}
+            selectedOrderId={selectedOrderId}
+            typeFilter={orderTypeFilter}
+            statusFilter={orderStatusFilter}
+            draft={orderDraft}
+            lineProductId={orderLineProductId}
+            lineQty={orderLineQty}
+            patch={orderPatch}
+            loading={ordersQuery.isFetching || orderDetailQuery.isFetching}
+            saving={createOrderMutation.isPending || patchOrderMutation.isPending}
+            onTypeFilterChange={setOrderTypeFilter}
+            onStatusFilterChange={setOrderStatusFilter}
+            onSelectOrder={setSelectedOrderId}
+            onDraftChange={setOrderDraft}
+            onLineProductIdChange={setOrderLineProductId}
+            onLineQtyChange={setOrderLineQty}
+            onPatchChange={setOrderPatch}
+            onAddLine={() => {
+              if (!orderLineProductId.trim() || !orderLineQty || orderLineQty <= 0) {
+                setNotice({ type: 'error', message: '请填写订单行产品和正数数量' });
+                return;
+              }
+              setOrderDraft((draft) => ({
+                ...draft,
+                lines: [...draft.lines, { product_id: orderLineProductId.trim().toUpperCase(), qty: orderLineQty }],
+              }));
+              setOrderLineProductId('');
+              setOrderLineQty(1);
+            }}
+            onRemoveLine={(index) =>
+              setOrderDraft((draft) => ({ ...draft, lines: draft.lines.filter((_, rowIndex) => rowIndex !== index) }))
+            }
+            onCreate={() => createOrderMutation.mutate()}
+            onPatch={() => patchOrderMutation.mutate()}
+          />
         ) : activeView === 'dashboard' ? (
           <InventoryDashboard
             dashboardProduct={dashboardProduct}
@@ -825,6 +937,268 @@ function InventoryList({ rows }: { rows: InventoryRow[] }) {
       )}
     />
   );
+}
+
+interface OrderManagementProps {
+  orders: OrderSummary[];
+  detail: OrderDetail | undefined;
+  selectedOrderId: number | null;
+  typeFilter: OrderType | undefined;
+  statusFilter: string | undefined;
+  draft: OrderInput;
+  lineProductId: string;
+  lineQty: number | null;
+  patch: { partner: string; due_date: string; status: string };
+  loading: boolean;
+  saving: boolean;
+  onTypeFilterChange: (value: OrderType | undefined) => void;
+  onStatusFilterChange: (value: string | undefined) => void;
+  onSelectOrder: (value: number) => void;
+  onDraftChange: (value: OrderInput) => void;
+  onLineProductIdChange: (value: string) => void;
+  onLineQtyChange: (value: number | null) => void;
+  onPatchChange: (value: { partner: string; due_date: string; status: string }) => void;
+  onAddLine: () => void;
+  onRemoveLine: (index: number) => void;
+  onCreate: () => void;
+  onPatch: () => void;
+}
+
+function OrderManagement({
+  orders,
+  detail,
+  selectedOrderId,
+  typeFilter,
+  statusFilter,
+  draft,
+  lineProductId,
+  lineQty,
+  patch,
+  loading,
+  saving,
+  onTypeFilterChange,
+  onStatusFilterChange,
+  onSelectOrder,
+  onDraftChange,
+  onLineProductIdChange,
+  onLineQtyChange,
+  onPatchChange,
+  onAddLine,
+  onRemoveLine,
+  onCreate,
+  onPatch,
+}: OrderManagementProps) {
+  const orderTypeOptions: Array<{ value: OrderType; label: string }> = [
+    { value: 'PURCHASE', label: '采购单' },
+    { value: 'PRODUCTION', label: '生产单' },
+  ];
+  const statusOptions = orderStatusOptions(draft.order_type);
+
+  return (
+    <>
+      <section className="operation-panel">
+        <Title level={4}>订单列表</Title>
+        <div className="form-grid">
+          <label>
+            类型
+            <Select allowClear value={typeFilter} options={orderTypeOptions} placeholder="全部类型" onChange={onTypeFilterChange} />
+          </label>
+          <label>
+            状态
+            <Select
+              allowClear
+              value={statusFilter}
+              placeholder="全部状态"
+              onChange={onStatusFilterChange}
+              options={[
+                { value: 'PENDING', label: 'PENDING' },
+                { value: 'DONE', label: 'DONE' },
+                { value: 'CANCELLED', label: 'CANCELLED' },
+                { value: 'SHORTAGE', label: 'SHORTAGE' },
+                { value: 'IN_PRODUCTION', label: 'IN_PRODUCTION' },
+                { value: 'PARTIAL_RECEIVED', label: 'PARTIAL_RECEIVED' },
+                { value: 'RECEIVED', label: 'RECEIVED' },
+                { value: 'PRODUCED', label: 'PRODUCED' },
+              ]}
+            />
+          </label>
+        </div>
+
+        <Table
+          size="small"
+          className="inventory-table"
+          loading={loading}
+          dataSource={orders}
+          rowKey="order_id"
+          pagination={false}
+          scroll={{ x: 820 }}
+          columns={[
+            {
+              title: '订单',
+              dataIndex: 'order_id',
+              render: (value: number) => (
+                <Button type="link" className="table-link-button" onClick={() => onSelectOrder(value)}>
+                  #{value}
+                </Button>
+              ),
+            },
+            { title: '类型', dataIndex: 'order_type' },
+            {
+              title: '往来方',
+              dataIndex: 'partner',
+              render: (value: string | null) => value ?? '-',
+            },
+            {
+              title: '交期',
+              dataIndex: 'due_date',
+              render: (value: string | null) => value ?? '-',
+            },
+            { title: '状态', dataIndex: 'status' },
+            { title: '行数', dataIndex: 'line_count' },
+            { title: '数量', dataIndex: 'total_qty' },
+          ]}
+        />
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>新建订单</Title>
+        <div className="form-grid">
+          <label>
+            类型
+            <Select
+              value={draft.order_type}
+              options={orderTypeOptions}
+              onChange={(value) => onDraftChange({ ...draft, order_type: value, status: 'PENDING', lines: [] })}
+            />
+          </label>
+          <label>
+            往来方
+            <Input value={draft.partner ?? ''} onChange={(event) => onDraftChange({ ...draft, partner: event.target.value })} />
+          </label>
+          <label>
+            交期
+            <Input
+              value={draft.due_date ?? ''}
+              placeholder="YYYY-MM-DD"
+              onChange={(event) => onDraftChange({ ...draft, due_date: event.target.value || null })}
+            />
+          </label>
+          <label>
+            表头状态
+            <Select
+              value={draft.status ?? 'PENDING'}
+              options={statusOptions}
+              onChange={(value) => onDraftChange({ ...draft, status: value })}
+            />
+          </label>
+        </div>
+
+        <Title level={5}>订单行</Title>
+        <div className="form-grid">
+          <label>
+            产品 ID
+            <Input value={lineProductId} placeholder="例如 FG-TEST" onChange={(event) => onLineProductIdChange(event.target.value)} />
+          </label>
+          <label>
+            数量
+            <InputNumber min={0.0001} value={lineQty} onChange={onLineQtyChange} className="full-input" />
+          </label>
+        </div>
+        <Space className="action-row" wrap>
+          <Button onClick={onAddLine}>添加订单行</Button>
+          <Button type="primary" disabled={draft.lines.length === 0} loading={saving} onClick={onCreate}>
+            创建订单
+          </Button>
+        </Space>
+
+        <List
+          className="warning-list"
+          dataSource={draft.lines}
+          locale={{ emptyText: '暂无订单行' }}
+          renderItem={(item: OrderLineInput, index) => (
+            <List.Item
+              actions={[
+                <Button key="delete" size="small" danger onClick={() => onRemoveLine(index)}>
+                  删除
+                </Button>,
+              ]}
+            >
+              <Space wrap>
+                <Text strong>{item.product_id}</Text>
+                <Text>数量 {item.qty}</Text>
+                <Tag>{item.line_status ?? 'PENDING'}</Tag>
+              </Space>
+            </List.Item>
+          )}
+        />
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>订单详情</Title>
+        {detail ? (
+          <>
+            <div className="selected-product">
+              #{detail.order_id} / {detail.order_type} / {detail.status}
+            </div>
+            <div className="form-grid">
+              <label>
+                往来方
+                <Input value={patch.partner} onChange={(event) => onPatchChange({ ...patch, partner: event.target.value })} />
+              </label>
+              <label>
+                交期
+                <Input
+                  value={patch.due_date}
+                  placeholder="YYYY-MM-DD"
+                  onChange={(event) => onPatchChange({ ...patch, due_date: event.target.value })}
+                />
+              </label>
+              <label>
+                表头状态
+                <Select
+                  value={patch.status}
+                  options={orderStatusOptions(detail.order_type)}
+                  onChange={(value) => onPatchChange({ ...patch, status: value })}
+                />
+              </label>
+            </div>
+            <Space className="action-row" wrap>
+              <Button type="primary" disabled={!selectedOrderId} loading={saving} onClick={onPatch}>
+                更新表头
+              </Button>
+            </Space>
+
+            <Table
+              size="small"
+              className="inventory-table"
+              dataSource={detail.lines}
+              rowKey="order_line_id"
+              pagination={false}
+              scroll={{ x: 720 }}
+              columns={[
+                { title: '行号', dataIndex: 'order_line_id' },
+                { title: '产品', dataIndex: 'product_id' },
+                { title: '名称', dataIndex: 'product_name' },
+                { title: '数量', dataIndex: 'qty' },
+                { title: '已完成', dataIndex: 'qty_done' },
+                { title: '行状态', dataIndex: 'line_status' },
+              ]}
+            />
+          </>
+        ) : (
+          <Empty description="选择一个订单后查看详情" />
+        )}
+      </section>
+    </>
+  );
+}
+
+function orderStatusOptions(orderType: OrderType) {
+  const statuses =
+    orderType === 'PURCHASE'
+      ? ['PENDING', 'PARTIAL_RECEIVED', 'RECEIVED', 'DONE', 'CANCELLED']
+      : ['PENDING', 'SHORTAGE', 'PICKED', 'IN_PRODUCTION', 'PRODUCED', 'CANCELLED'];
+  return statuses.map((status) => ({ value: status, label: status }));
 }
 
 interface InventoryDashboardProps {
