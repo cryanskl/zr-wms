@@ -25,6 +25,14 @@ body {
 }
 
 .foundation-card {
-  width: min(680px, 100%);
+  width: min(840px, 100%);
   border-radius: 8px;
+}
+
+.results-region {
+  margin-top: 24px;
+}
+
+.results-list {
+  margin-top: 12px;
 }

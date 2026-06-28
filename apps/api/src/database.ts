@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, QueryResultRow } from 'pg';
 
 export const databaseUrl = process.env.DATABASE_URL;
 
@@ -7,6 +7,14 @@ export const pool = databaseUrl
       connectionString: databaseUrl,
     })
   : null;
+
+export async function queryDatabase<T extends QueryResultRow>(text: string, values: unknown[] = []) {
+  if (!pool) {
+    throw new Error('DATABASE_URL is not set');
+  }
+
+  return pool.query<T>(text, values);
+}
 
 export async function checkDatabase() {
   if (!pool) {
