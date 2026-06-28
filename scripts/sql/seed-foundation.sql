@@ -9,10 +9,28 @@ VALUES
 ON CONFLICT (warehouse_id) DO NOTHING;
 
 INSERT INTO app_user (name, role, warehouse_id)
-VALUES
-  ('操作员-一号仓', 'OPERATOR', 'W1'),
-  ('管理员', 'ADMIN', NULL),
-  ('老板', 'BOSS', NULL);
+SELECT 'operator', 'OPERATOR', 'W1'
+WHERE NOT EXISTS (SELECT 1 FROM app_user WHERE name = 'operator');
+
+INSERT INTO app_user (name, role, warehouse_id)
+SELECT 'admin', 'ADMIN', NULL
+WHERE NOT EXISTS (SELECT 1 FROM app_user WHERE name = 'admin');
+
+INSERT INTO app_user (name, role, warehouse_id)
+SELECT 'boss', 'BOSS', NULL
+WHERE NOT EXISTS (SELECT 1 FROM app_user WHERE name = 'boss');
+
+INSERT INTO app_user_password (user_id, password_hash)
+SELECT user_id, crypt('operator123', gen_salt('bf')) FROM app_user WHERE name = 'operator'
+ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = now();
+
+INSERT INTO app_user_password (user_id, password_hash)
+SELECT user_id, crypt('admin123', gen_salt('bf')) FROM app_user WHERE name = 'admin'
+ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = now();
+
+INSERT INTO app_user_password (user_id, password_hash)
+SELECT user_id, crypt('boss123', gen_salt('bf')) FROM app_user WHERE name = 'boss'
+ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = now();
 
 INSERT INTO slot (warehouse_id, code, row_no, col_no, level_no, position, status)
 VALUES

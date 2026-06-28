@@ -10,6 +10,7 @@ const orderedSqlFiles = [
   'docs/wms_schema_v1.7.sql',
   'docs/wms_procedures_v1.7.sql',
   'docs/wms_logic_v1.7.sql',
+  'scripts/sql/app-auth.sql',
   'scripts/sql/seed-foundation.sql',
 ];
 

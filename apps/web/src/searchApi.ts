@@ -13,12 +13,14 @@ export function buildSearchUrl(query: string) {
   return `/api/v1/search?${params.toString()}`;
 }
 
-export async function searchProducts(query: string): Promise<SearchResult[]> {
+export async function searchProducts(query: string, token?: string): Promise<SearchResult[]> {
   if (!query.trim()) {
     return [];
   }
 
-  const response = await fetch(buildSearchUrl(query));
+  const response = await fetch(buildSearchUrl(query), {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
   if (!response.ok) {
     throw new Error(`搜索失败：HTTP ${response.status}`);
   }

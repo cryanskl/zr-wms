@@ -1,6 +1,19 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Alert, Card, Empty, Input, List, Space, Tag, Typography } from 'antd';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Alert, Button, Card, Empty, Form, Input, InputNumber, List, Modal, Segmented, Select, Space, Tag, Typography } from 'antd';
+import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, LogOut } from 'lucide-react';
+import { CurrentUser, login } from './authApi';
+import {
+  getInventory,
+  getSlots,
+  getWarehouses,
+  inbound,
+  InventoryRow,
+  outbound,
+  searchResultLabel,
+  Slot,
+  transfer,
+} from './operationsApi';
 import { SearchResult, searchProducts } from './searchApi';
 
 const { Title, Paragraph, Text } = Typography;
@@ -13,24 +26,180 @@ const matchedLabels: Record<SearchResult['matched'], string> = {
 };
 
 export function App() {
+  const queryClient = useQueryClient();
   const [inputValue, setInputValue] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
+  const [auth, setAuth] = useState(() => {
+    const raw = localStorage.getItem('zr-wms-auth');
+    return raw ? (JSON.parse(raw) as { accessToken: string; user: CurrentUser }) : null;
+  });
+  const [selectedProduct, setSelectedProduct] = useState<SearchResult | null>(null);
+  const [operationType, setOperationType] = useState<'inbound' | 'outbound' | 'transfer'>('inbound');
+  const [warehouse, setWarehouse] = useState('W1');
+  const [toWarehouse, setToWarehouse] = useState('W1');
+  const [slot, setSlot] = useState<number | null>(null);
+  const [toSlot, setToSlot] = useState<number | null>(null);
+  const [qty, setQty] = useState<number | null>(100);
+  const [reason, setReason] = useState('手工操作');
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const searchQuery = useQuery({
     queryKey: ['search', submittedQuery],
-    queryFn: () => searchProducts(submittedQuery),
+    queryFn: () => searchProducts(submittedQuery, auth?.accessToken),
     enabled: submittedQuery.trim().length > 0,
   });
 
   const results = searchQuery.data ?? [];
+  const token = auth?.accessToken ?? '';
+  const isAdmin = auth?.user.role === 'ADMIN';
+
+  const warehousesQuery = useQuery({
+    queryKey: ['warehouses', token],
+    queryFn: () => getWarehouses(token),
+    enabled: Boolean(token),
+  });
+
+  const fromSlotsQuery = useQuery({
+    queryKey: ['slots', token, warehouse],
+    queryFn: () => getSlots(token, warehouse),
+    enabled: Boolean(token && warehouse),
+  });
+
+  const toSlotsQuery = useQuery({
+    queryKey: ['slots', token, toWarehouse],
+    queryFn: () => getSlots(token, toWarehouse),
+    enabled: Boolean(token && toWarehouse),
+  });
+
+  const inventoryQuery = useQuery({
+    queryKey: ['inventory', token, selectedProduct?.product_id],
+    queryFn: () => getInventory(token, selectedProduct?.product_id),
+    enabled: Boolean(token && selectedProduct),
+  });
+
+  const loginMutation = useMutation({
+    mutationFn: login,
+    onSuccess: (data) => {
+      localStorage.setItem('zr-wms-auth', JSON.stringify(data));
+      setAuth(data);
+      setNotice({ type: 'success', message: `已登录：${data.user.name} / ${data.user.role}` });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '登录失败' }),
+  });
+
+  const operationMutation = useMutation({
+    mutationFn: async ({ force }: { force?: boolean } = {}) => {
+      if (!selectedProduct || !qty || qty <= 0 || !slot) {
+        throw new Error('请选择产品、库位并填写正数数量');
+      }
+
+      if (operationType === 'inbound') {
+        return inbound(token, {
+          product: selectedProduct.product_id,
+          warehouse,
+          slot,
+          qty,
+          type: 'IN',
+          reason,
+        });
+      }
+
+      if (operationType === 'outbound') {
+        return outbound(
+          token,
+          {
+            product: selectedProduct.product_id,
+            warehouse,
+            slot,
+            qty,
+            type: 'OUT',
+            reason,
+          },
+          Boolean(force),
+        );
+      }
+
+      if (!toSlot) {
+        throw new Error('移库需要选择目标库位');
+      }
+
+      return transfer(token, {
+        product: selectedProduct.product_id,
+        qty,
+        fromWarehouse: warehouse,
+        fromSlot: slot,
+        toWarehouse,
+        toSlot,
+        reason,
+      });
+    },
+    onSuccess: (data) => {
+      const movementText = 'movementId' in data ? data.movementId : data.movementIds.join(', ');
+      setNotice({ type: 'success', message: `操作成功，流水 ${movementText}` });
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    },
+    onError: (error) =>
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : '操作失败，请检查输入' }),
+  });
+
+  const warehouseOptions = (warehousesQuery.data ?? []).map((item) => ({
+    value: item.warehouse_id,
+    label: `${item.warehouse_id} ${item.name}`,
+  }));
+
+  const fromSlotOptions = useMemo(() => slotOptions(fromSlotsQuery.data), [fromSlotsQuery.data]);
+  const toSlotOptions = useMemo(() => slotOptions(toSlotsQuery.data), [toSlotsQuery.data]);
+
+  if (!auth) {
+    return (
+      <main className="app-shell">
+        <Card className="operation-card">
+          <Title level={2}>ZR WMS 登录</Title>
+          <Paragraph>测试账号：operator / operator123，admin / admin123，boss / boss123。</Paragraph>
+          {notice && <Alert className="form-alert" type={notice.type} showIcon message={notice.message} />}
+          <Form
+            layout="vertical"
+            onFinish={(values) => loginMutation.mutate(values as { username: string; password: string })}
+          >
+            <Form.Item label="用户名" name="username" rules={[{ required: true, message: '请输入用户名' }]}>
+              <Input autoComplete="username" />
+            </Form.Item>
+            <Form.Item label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
+              <Input.Password autoComplete="current-password" />
+            </Form.Item>
+            <Button type="primary" htmlType="submit" block loading={loginMutation.isPending}>
+              登录
+            </Button>
+          </Form>
+        </Card>
+      </main>
+    );
+  }
 
   return (
     <main className="app-shell">
-      <Card className="foundation-card">
-        <Title level={2}>ZR WMS 搜索</Title>
-        <Paragraph>
-          输入产品编号、别名、路径别名或备注关键词，先验证“查得快、查得准”这条链路。
-        </Paragraph>
+      <Card className="operation-card">
+        <Space className="topbar" align="center">
+          <div>
+            <Title level={2}>ZR WMS 出入库</Title>
+            <Text type="secondary">
+              当前用户：{auth.user.name} / {auth.user.role}
+            </Text>
+          </div>
+          <Button
+            icon={<LogOut size={16} />}
+            onClick={() => {
+              localStorage.removeItem('zr-wms-auth');
+              setAuth(null);
+            }}
+          >
+            退出
+          </Button>
+        </Space>
+
+        {notice && <Alert className="form-alert" type={notice.type} showIcon message={notice.message} />}
+
+        <Title level={4}>选择产品</Title>
         <Input.Search
           allowClear
           enterButton="搜索"
@@ -69,6 +238,9 @@ export function App() {
                           <Text strong>{item.product_id}</Text>
                           <Text>{item.name}</Text>
                           <Tag>{matchedLabels[item.matched]}</Tag>
+                          <Button size="small" onClick={() => setSelectedProduct(item)}>
+                            选择
+                          </Button>
                         </Space>
                       }
                       description={
@@ -84,7 +256,127 @@ export function App() {
             </>
           )}
         </section>
+
+        <section className="operation-panel">
+          <Title level={4}>库存操作</Title>
+          <div className="selected-product">
+            {selectedProduct ? searchResultLabel(selectedProduct) : '尚未选择产品'}
+          </div>
+          <Segmented
+            block
+            value={operationType}
+            onChange={(value) => setOperationType(value as 'inbound' | 'outbound' | 'transfer')}
+            options={[
+              { label: '入库', value: 'inbound', icon: <ArrowDownToLine size={16} /> },
+              { label: '出库', value: 'outbound', icon: <ArrowUpFromLine size={16} /> },
+              { label: '移库', value: 'transfer', icon: <ArrowRightLeft size={16} /> },
+            ]}
+          />
+
+          <div className="form-grid">
+            <label>
+              仓库
+              <Select value={warehouse} options={warehouseOptions} onChange={setWarehouse} />
+            </label>
+            <label>
+              库位
+              <Select
+                value={slot}
+                options={fromSlotOptions}
+                placeholder="选择库位"
+                onChange={setSlot}
+                loading={fromSlotsQuery.isFetching}
+              />
+            </label>
+            {operationType === 'transfer' && (
+              <>
+                <label>
+                  目标仓库
+                  <Select value={toWarehouse} options={warehouseOptions} onChange={setToWarehouse} />
+                </label>
+                <label>
+                  目标库位
+                  <Select
+                    value={toSlot}
+                    options={toSlotOptions}
+                    placeholder="选择目标库位"
+                    onChange={setToSlot}
+                    loading={toSlotsQuery.isFetching}
+                  />
+                </label>
+              </>
+            )}
+            <label>
+              数量
+              <InputNumber min={0.0001} value={qty} onChange={setQty} className="full-input" />
+            </label>
+            <label>
+              原因
+              <Input value={reason} onChange={(event) => setReason(event.target.value)} />
+            </label>
+          </div>
+
+          <Space className="action-row" wrap>
+            <Button type="primary" loading={operationMutation.isPending} onClick={() => operationMutation.mutate({})}>
+              提交{operationType === 'inbound' ? '入库' : operationType === 'outbound' ? '出库' : '移库'}
+            </Button>
+            {operationType === 'outbound' && isAdmin && (
+              <Button
+                danger
+                loading={operationMutation.isPending}
+                onClick={() =>
+                  Modal.confirm({
+                    title: '确认强制出库？',
+                    content: '强制出库允许库存变成负数，仅管理员可执行。',
+                    okText: '确认强制出库',
+                    cancelText: '取消',
+                    onOk: () => operationMutation.mutate({ force: true }),
+                  })
+                }
+              >
+                强制出库
+              </Button>
+            )}
+          </Space>
+        </section>
+
+        <section className="operation-panel">
+          <Title level={4}>当前库存</Title>
+          <InventoryList rows={inventoryQuery.data ?? []} />
+        </section>
       </Card>
     </main>
+  );
+}
+
+function slotOptions(slots: Slot[] | undefined) {
+  return (slots ?? []).map((item) => ({
+    value: item.slot_id,
+    label: `${item.slot_id} / ${item.code}`,
+  }));
+}
+
+function InventoryList({ rows }: { rows: InventoryRow[] }) {
+  if (rows.length === 0) {
+    return <Empty description="选择产品后显示库存" />;
+  }
+
+  return (
+    <List
+      size="small"
+      dataSource={rows}
+      renderItem={(item) => (
+        <List.Item>
+          <Space direction="vertical" size={0}>
+            <Text strong>
+              {item.product_id} / {item.warehouse_id} / 库位 {item.slot_id ?? '无'}
+            </Text>
+            <Text>
+              在库 {item.qty_on_hand}，可用 {item.available}
+            </Text>
+          </Space>
+        </List.Item>
+      )}
+    />
   );
 }
