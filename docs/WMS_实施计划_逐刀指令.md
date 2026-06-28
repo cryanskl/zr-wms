@@ -240,7 +240,7 @@ C. 价格（✅ 已完成）：
 - GET /products/{id}/price → 查看价格（入货/加工/损耗/出货）。需 ADMIN
 - PUT /products/{id}/price → 改价格。仅 BOSS
 
-D. 通知 + 定时任务：
+D. 通知 + 定时任务（✅ 已完成）：
 - 定时扫描低库存 → 邮件/企微推送
 - 定时生成日/周/月报
 - 与实时 API 分开跑（独立的 scheduler/worker），别拖慢正常出入库

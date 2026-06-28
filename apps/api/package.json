@@ -6,6 +6,8 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
+    "scheduler": "tsx src/scheduler.ts",
+    "scheduler:once": "SCHEDULER_ONCE=true tsx src/scheduler.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
