@@ -31,6 +31,19 @@ export interface PathAliasRow {
   generated_at: string;
 }
 
+export interface ProducibleOptions {
+  deep?: boolean;
+  useSfStock?: boolean;
+}
+
+export interface ProducibleResult {
+  target: string;
+  maxMake: number;
+  limiting: string | null;
+  limitingOnHand: number | null;
+  limitingDemand?: number | null;
+}
+
 export function buildBomUrl(productId: string) {
   return `/api/v1/products/${encodeURIComponent(productId)}/bom`;
 }
@@ -44,6 +57,14 @@ export function buildWhereUsedUrl(productId: string, recursive = false) {
 
 export function buildPathAliasesUrl(productId: string) {
   return `/api/v1/products/${encodeURIComponent(productId)}/path-aliases`;
+}
+
+export function buildProducibleUrl(productId: string, options: ProducibleOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.deep) params.set('deep', 'true');
+  if (options.deep && options.useSfStock === false) params.set('useSfStock', 'false');
+  const suffix = params.toString();
+  return `/api/v1/products/${encodeURIComponent(productId)}/producible${suffix ? `?${suffix}` : ''}`;
 }
 
 export function buildReplaceBomRequest(productId: string, lines: BomLineInput[]) {
@@ -75,6 +96,10 @@ export function getWhereUsed(token: string, productId: string, recursive = false
 
 export function getPathAliases(token: string, productId: string) {
   return apiFetch<PathAliasRow[]>(buildPathAliasesUrl(productId), token);
+}
+
+export function getProducible(token: string, productId: string, options: ProducibleOptions = {}) {
+  return apiFetch<ProducibleResult>(buildProducibleUrl(productId, options), token);
 }
 
 async function apiFetch<T>(url: string, token: string, init: RequestInit = {}): Promise<T> {

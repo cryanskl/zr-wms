@@ -67,3 +67,30 @@ export function buildPathAliasesQuery(): SqlQuery {
     `,
   };
 }
+
+export function buildMaxProducibleQuery(): SqlQuery {
+  return {
+    text: `
+      SELECT
+        target,
+        max_make::text,
+        limiting_product,
+        limiting_on_hand::text
+      FROM fn_max_producible($1::text)
+    `,
+  };
+}
+
+export function buildMaxProducibleDeepQuery(): SqlQuery {
+  return {
+    text: `
+      SELECT
+        target,
+        max_make::text,
+        limiting_product,
+        limiting_on_hand::text,
+        limiting_demand::text
+      FROM fn_max_producible_deep($1::text, $2::boolean)
+    `,
+  };
+}

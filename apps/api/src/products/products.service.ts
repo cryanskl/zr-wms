@@ -4,6 +4,8 @@ import {
   buildBomQuery,
   buildDeleteBomLinesQuery,
   buildInsertBomLineQuery,
+  buildMaxProducibleDeepQuery,
+  buildMaxProducibleQuery,
   buildPathAliasesQuery,
   buildRegeneratePathAliasesQuery,
   buildWhereUsedQuery,
@@ -108,6 +110,17 @@ interface WhereUsedRow {
   parent_name: string;
   ptype: ProductType;
   lvl: number;
+}
+
+interface MaxProducibleRow {
+  target: string;
+  max_make: string;
+  limiting_product: string | null;
+  limiting_on_hand: string | null;
+}
+
+interface MaxProducibleDeepRow extends MaxProducibleRow {
+  limiting_demand: string | null;
 }
 
 interface IdRow {
@@ -318,6 +331,23 @@ export class ProductsService {
     return result.rows.map(mapPathAliasRow);
   }
 
+  async producible(productId: string, deep: string | undefined, useSfStock: string | undefined) {
+    try {
+      if (deep === 'true') {
+        const result = await queryDatabase<MaxProducibleDeepRow>(buildMaxProducibleDeepQuery().text, [
+          productId,
+          useSfStock !== 'false',
+        ]);
+        return mapMaxProducibleDeepRow(result.rows[0]);
+      }
+
+      const result = await queryDatabase<MaxProducibleRow>(buildMaxProducibleQuery().text, [productId]);
+      return mapMaxProducibleRow(result.rows[0]);
+    } catch (error) {
+      mapProductError(error);
+    }
+  }
+
   private async ensureProductExists(productId: string) {
     await this.detail(productId);
   }
@@ -365,6 +395,22 @@ function mapPathAliasRow(row: PathAliasRow) {
     root_product_id: row.root_product_id,
     path_text: row.path_text,
     generated_at: row.generated_at,
+  };
+}
+
+function mapMaxProducibleRow(row: MaxProducibleRow) {
+  return {
+    target: row.target,
+    maxMake: Number(row.max_make),
+    limiting: row.limiting_product,
+    limitingOnHand: row.limiting_on_hand === null ? null : Number(row.limiting_on_hand),
+  };
+}
+
+function mapMaxProducibleDeepRow(row: MaxProducibleDeepRow) {
+  return {
+    ...mapMaxProducibleRow(row),
+    limitingDemand: row.limiting_demand === null ? null : Number(row.limiting_demand),
   };
 }
 
@@ -466,6 +512,9 @@ function mapProductError(error: unknown): never {
   }
   if (pgError.code === '23503') {
     throw new ConflictException('产品或 BOM 子项不存在，或产品已被业务数据引用，无法完成操作');
+  }
+  if (pgError.code === 'P0001') {
+    throw new ConflictException(pgError.message ?? '产品推衍失败');
   }
   if (pgError.code === '23514' || pgError.code === '22P02') {
     throw new BadRequestException(pgError.message ?? '产品数据不合法');

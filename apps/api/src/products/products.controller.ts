@@ -70,6 +70,11 @@ export class ProductsController {
     return this.productsService.pathAliases(productId);
   }
 
+  @Get(':id/producible')
+  producible(@Param('id') productId: string, @Query('deep') deep?: string, @Query('useSfStock') useSfStock?: string) {
+    return this.productsService.producible(productId, deep, useSfStock);
+  }
+
   @Get(':id')
   detail(@Param('id') productId: string) {
     return this.productsService.detail(productId);

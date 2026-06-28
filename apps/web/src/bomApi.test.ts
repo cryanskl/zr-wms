@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBomUrl, buildReplaceBomRequest, buildWhereUsedUrl } from './bomApi';
+import { buildBomUrl, buildProducibleUrl, buildReplaceBomRequest, buildWhereUsedUrl } from './bomApi';
 
 describe('bomApi helpers', () => {
   it('builds BOM and where-used URLs', () => {
@@ -15,5 +15,13 @@ describe('bomApi helpers', () => {
         body: JSON.stringify({ lines: [{ child_product_id: 'RM-1', qty: 2, seq: 1 }] }),
       },
     });
+  });
+
+  it('builds producible URLs for single-level and deep modes', () => {
+    expect(buildProducibleUrl('FG-1')).toBe('/api/v1/products/FG-1/producible');
+    expect(buildProducibleUrl('FG-1', { deep: true })).toBe('/api/v1/products/FG-1/producible?deep=true');
+    expect(buildProducibleUrl('FG-1', { deep: true, useSfStock: false })).toBe(
+      '/api/v1/products/FG-1/producible?deep=true&useSfStock=false',
+    );
   });
 });

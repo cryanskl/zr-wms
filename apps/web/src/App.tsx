@@ -19,8 +19,11 @@ import {
   BomLineInput,
   getBom,
   getPathAliases,
+  getProducible,
   getWhereUsed,
   PathAliasRow,
+  ProducibleOptions,
+  ProducibleResult,
   regeneratePathAliases,
   replaceBom,
   WhereUsedRow,
@@ -141,6 +144,8 @@ export function App() {
   const [bomChildProductId, setBomChildProductId] = useState('');
   const [bomQty, setBomQty] = useState<number | null>(1);
   const [bomSeq, setBomSeq] = useState<number | null>(1);
+  const [producibleResult, setProducibleResult] = useState<ProducibleResult | null>(null);
+  const [producibleMode, setProducibleMode] = useState('');
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string | null>(null);
   const [warehouseDraft, setWarehouseDraft] = useState<WarehouseInput>({
     warehouse_id: '',
@@ -512,6 +517,21 @@ export function App() {
       void queryClient.invalidateQueries({ queryKey: ['search'] });
     },
     onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '重算路径别名失败' }),
+  });
+
+  const producibleMutation = useMutation({
+    mutationFn: ({ options }: { label: string; options: ProducibleOptions }) => {
+      if (!selectedProductId) {
+        throw new Error('请选择产品后再计算产能');
+      }
+      return getProducible(token, selectedProductId, options);
+    },
+    onSuccess: (data, variables) => {
+      setProducibleResult(data);
+      setProducibleMode(variables.label);
+      setNotice({ type: 'success', message: `已计算 ${data.target} ${variables.label}` });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '产能推衍失败' }),
   });
 
   const createWarehouseMutation = useMutation({
@@ -1081,6 +1101,8 @@ export function App() {
             bomRows={bomQuery.data ?? []}
             pathAliasRows={pathAliasesQuery.data ?? productDetailQuery.data?.path_aliases ?? []}
             whereUsedRows={whereUsedQuery.data ?? []}
+            producibleResult={producibleResult}
+            producibleMode={producibleMode}
             selectedProductId={selectedProductId}
             productTypeFilter={productTypeFilter}
             productActiveFilter={productActiveFilter}
@@ -1100,13 +1122,16 @@ export function App() {
               deleteAliasMutation.isPending ||
               addImageMutation.isPending ||
               replaceBomMutation.isPending ||
-              regenerateAliasesMutation.isPending
+              regenerateAliasesMutation.isPending ||
+              producibleMutation.isPending
             }
             onTypeFilterChange={setProductTypeFilter}
             onActiveFilterChange={setProductActiveFilter}
             onSelectProduct={(product) => {
               setSelectedProductId(product.product_id);
               setProductDraft(productToInput(product));
+              setProducibleResult(null);
+              setProducibleMode('');
             }}
             onDraftChange={setProductDraft}
             onAliasTextChange={setAliasText}
@@ -1154,6 +1179,7 @@ export function App() {
               })
             }
             onRegenerateAliases={() => regenerateAliasesMutation.mutate()}
+            onCalculateProducible={(label, options) => producibleMutation.mutate({ label, options })}
           />
         ) : (
           <WarehouseManagement
@@ -2014,6 +2040,8 @@ interface ProductManagementProps {
   bomRows: BomLine[];
   pathAliasRows: PathAliasRow[];
   whereUsedRows: WhereUsedRow[];
+  producibleResult: ProducibleResult | null;
+  producibleMode: string;
   selectedProductId: string | null;
   productTypeFilter: ProductType | undefined;
   productActiveFilter: boolean | undefined;
@@ -2046,6 +2074,7 @@ interface ProductManagementProps {
   onRemoveBomDraftRow: (index: number) => void;
   onReplaceBom: () => void;
   onRegenerateAliases: () => void;
+  onCalculateProducible: (label: string, options: ProducibleOptions) => void;
 }
 
 function ProductManagement({
@@ -2055,6 +2084,8 @@ function ProductManagement({
   bomRows,
   pathAliasRows,
   whereUsedRows,
+  producibleResult,
+  producibleMode,
   selectedProductId,
   productTypeFilter,
   productActiveFilter,
@@ -2087,6 +2118,7 @@ function ProductManagement({
   onRemoveBomDraftRow,
   onReplaceBom,
   onRegenerateAliases,
+  onCalculateProducible,
 }: ProductManagementProps) {
   const productTypeOptions = [
     { value: 'RM', label: 'RM 原材料' },
@@ -2394,6 +2426,54 @@ function ProductManagement({
           </>
         ) : (
           <Empty description="选择一个产品后管理 BOM" />
+        )}
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>产能推衍</Title>
+        {detail ? (
+          <>
+            <Text strong>{detail.product_id} / {detail.name}</Text>
+            <Space className="action-row" wrap>
+              <Button loading={saving} onClick={() => onCalculateProducible('单层', {})}>
+                单层计算
+              </Button>
+              <Button loading={saving} onClick={() => onCalculateProducible('深度', { deep: true })}>
+                深度计算
+              </Button>
+              <Button loading={saving} onClick={() => onCalculateProducible('深度（不用半成品库存）', { deep: true, useSfStock: false })}>
+                深度计算（不用半成品库存）
+              </Button>
+            </Space>
+
+            {producibleResult ? (
+              <List
+                className="warning-list"
+                header={`计算结果：${producibleMode}`}
+                dataSource={[
+                  ['目标产品', producibleResult.target],
+                  ['最多可做', producibleResult.maxMake],
+                  ['卡脖子物料', producibleResult.limiting ?? '-'],
+                  ['卡点在库', producibleResult.limitingOnHand ?? '-'],
+                  ...(producibleResult.limitingDemand === undefined
+                    ? []
+                    : ([['卡点需求', producibleResult.limitingDemand ?? '-']] as Array<[string, string | number]>)),
+                ]}
+                renderItem={([label, value]) => (
+                  <List.Item>
+                    <Space>
+                      <Text type="secondary">{label}</Text>
+                      <Text strong>{value}</Text>
+                    </Space>
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <Empty description="点击计算后显示产能结果" />
+            )}
+          </>
+        ) : (
+          <Empty description="选择一个半成品或成品后计算产能" />
         )}
       </section>
     </>
