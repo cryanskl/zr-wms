@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { pool, queryDatabase } from '../database';
+import { mapPgConcurrencyError } from '../db-errors';
 import {
   buildCreateOrderQuery,
   buildInsertOrderLineQuery,
@@ -468,6 +469,7 @@ function mapReceiveError(error: unknown): never {
   if (pgError.code === '22P02' || pgError.code === '22007') {
     throw new BadRequestException(pgError.message ?? '到货数据不合法');
   }
+  mapPgConcurrencyError(error);
   throw error;
 }
 
@@ -487,5 +489,6 @@ function mapOrderError(error: unknown): never {
   if (pgError.code === '23514' || pgError.code === '22P02' || pgError.code === '22007') {
     throw new BadRequestException(pgError.message ?? '订单数据不合法');
   }
+  mapPgConcurrencyError(error);
   throw error;
 }

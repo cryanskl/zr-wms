@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   FileDown,
+  History,
   LogOut,
   MapPinned,
   PackageSearch,
@@ -121,9 +122,19 @@ import {
   SlotUtilizationRow,
 } from './reportApi';
 import { ImportResult, ImportType, importExcel } from './importApi';
+import { getOperationLogs, OperationLogRow } from './operationLogApi';
 
 const { Title, Paragraph, Text } = Typography;
-type ActiveView = 'operations' | 'dashboard' | 'reports' | 'imports' | 'products' | 'warehouses' | 'orders' | 'stocktakes';
+type ActiveView =
+  | 'operations'
+  | 'dashboard'
+  | 'reports'
+  | 'imports'
+  | 'operationLogs'
+  | 'products'
+  | 'warehouses'
+  | 'orders'
+  | 'stocktakes';
 
 const matchedLabels: Record<SearchResult['matched'], string> = {
   name: '产品名',
@@ -291,6 +302,12 @@ export function App() {
     queryKey: ['slot-utilization', token],
     queryFn: () => getSlotUtilizationReport(token),
     enabled: Boolean(token),
+  });
+
+  const operationLogsQuery = useQuery({
+    queryKey: ['operation-logs', token],
+    queryFn: () => getOperationLogs(token, { limit: 100 }),
+    enabled: Boolean(token && isAdmin && activeView === 'operationLogs'),
   });
 
   const productsQuery = useQuery({
@@ -529,12 +546,30 @@ export function App() {
     value: item.warehouse_id,
     label: `${item.warehouse_id} ${item.name}`,
   }));
+  const navOptions = useMemo<Array<{ label: string; value: ActiveView; icon: JSX.Element }>>(
+    () => [
+      { label: '出入库', value: 'operations', icon: <ClipboardList size={16} /> },
+      { label: '订单', value: 'orders', icon: <ScrollText size={16} /> },
+      { label: '盘点', value: 'stocktakes', icon: <ClipboardCheck size={16} /> },
+      { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
+      ...(canManageProducts
+        ? [
+            { label: '报表', value: 'reports' as const, icon: <BarChart3 size={16} /> },
+            { label: '导入', value: 'imports' as const, icon: <UploadCloud size={16} /> },
+            { label: '产品管理', value: 'products' as const, icon: <PackageSearch size={16} /> },
+            { label: '仓库库位', value: 'warehouses' as const, icon: <MapPinned size={16} /> },
+          ]
+        : []),
+      ...(isAdmin ? [{ label: '操作日志', value: 'operationLogs' as const, icon: <History size={16} /> }] : []),
+    ],
+    [canManageProducts, isAdmin],
+  );
 
   useEffect(() => {
-    if (activeView === 'imports' && !canManageProducts) {
+    if (!navOptions.some((option) => option.value === activeView)) {
       setActiveView('operations');
     }
-  }, [activeView, canManageProducts]);
+  }, [activeView, navOptions]);
 
   const createProductMutation = useMutation({
     mutationFn: () => createProduct(token, productDraft),
@@ -900,16 +935,7 @@ export function App() {
           className="view-switch"
           value={activeView}
           onChange={(value) => setActiveView(value as ActiveView)}
-          options={[
-            { label: '出入库', value: 'operations', icon: <ClipboardList size={16} /> },
-            { label: '订单', value: 'orders', icon: <ScrollText size={16} /> },
-            { label: '盘点', value: 'stocktakes', icon: <ClipboardCheck size={16} /> },
-            { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
-            { label: '报表', value: 'reports', icon: <BarChart3 size={16} /> },
-            ...(canManageProducts ? [{ label: '导入', value: 'imports', icon: <UploadCloud size={16} /> }] : []),
-            { label: '产品管理', value: 'products', icon: <PackageSearch size={16} /> },
-            { label: '仓库库位', value: 'warehouses', icon: <MapPinned size={16} /> },
-          ]}
+          options={navOptions}
         />
 
         {activeView === 'operations' ? (
@@ -1236,6 +1262,12 @@ export function App() {
             result={importResult}
             importing={importMutation.isPending}
             onImport={(type, file) => importMutation.mutate({ type, file })}
+          />
+        ) : activeView === 'operationLogs' ? (
+          <OperationLogsView
+            rows={operationLogsQuery.data ?? []}
+            loading={operationLogsQuery.isFetching}
+            error={operationLogsQuery.error instanceof Error ? operationLogsQuery.error.message : null}
           />
         ) : activeView === 'products' ? (
           <ProductManagement
@@ -2457,6 +2489,53 @@ function importTypeLabel(type: ImportType) {
   if (type === 'products') return '产品';
   if (type === 'inventory') return '初始库存';
   return 'BOM';
+}
+
+interface OperationLogsViewProps {
+  rows: OperationLogRow[];
+  loading: boolean;
+  error: string | null;
+}
+
+function OperationLogsView({ rows, loading, error }: OperationLogsViewProps) {
+  return (
+    <section className="operation-panel">
+      <Title level={4}>操作日志</Title>
+      {error && <Alert className="form-alert" type="error" showIcon message="操作日志加载失败" description={error} />}
+      <Table
+        size="small"
+        className="inventory-table"
+        loading={loading}
+        dataSource={rows}
+        rowKey="log_id"
+        pagination={false}
+        scroll={{ x: 980 }}
+        locale={{ emptyText: '暂无操作日志' }}
+        columns={[
+          { title: '日志', dataIndex: 'log_id' },
+          { title: '实体', dataIndex: 'entity_type' },
+          {
+            title: '实体 ID',
+            dataIndex: 'entity_id',
+            render: (value: string | null) => value ?? '-',
+          },
+          { title: '动作', dataIndex: 'action' },
+          {
+            title: '操作员',
+            render: (_, row: OperationLogRow) => row.operator_name ?? row.operator_id ?? '-',
+          },
+          {
+            title: '详情',
+            dataIndex: 'detail',
+            render: (value: OperationLogRow['detail']) => (
+              <Text className="json-cell">{value ? JSON.stringify(value) : '-'}</Text>
+            ),
+          },
+          { title: '时间', dataIndex: 'created_at' },
+        ]}
+      />
+    </section>
+  );
 }
 
 interface ProductManagementProps {

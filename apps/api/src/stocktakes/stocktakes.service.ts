@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { queryDatabase } from '../database';
+import { mapPgConcurrencyError } from '../db-errors';
 import {
   buildApplyStocktakeLineQuery,
   buildCreateStocktakeLineQuery,
@@ -187,5 +188,6 @@ function mapStocktakeError(error: unknown): never {
   if (pgError.code === '22P02') {
     throw new BadRequestException(pgError.message ?? '盘点数据不合法');
   }
+  mapPgConcurrencyError(error);
   throw error;
 }

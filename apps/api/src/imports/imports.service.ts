@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException } from '@nestjs/common';
 import { PoolClient } from 'pg';
 import { pool } from '../database';
+import { mapPgConcurrencyError } from '../db-errors';
 import {
   ImportedBomRow,
   ImportedInventoryRow,
@@ -162,6 +163,12 @@ function mapImportDbError(error: unknown): never {
   const pgError = error as { code?: string; message?: string };
   if (pgError.code === '23503' || pgError.code === '23505' || pgError.code === '23514' || pgError.code === 'P0001') {
     throw new ConflictException(pgError.message ?? '导入数据与当前数据库约束冲突');
+  }
+
+  try {
+    mapPgConcurrencyError(error);
+  } catch (mapped) {
+    if (mapped !== error) throw mapped;
   }
 
   throw new InternalServerErrorException('导入失败');

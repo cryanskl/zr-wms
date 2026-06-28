@@ -10,6 +10,8 @@ import { ImportsController } from './imports/imports.controller';
 import { ImportsService } from './imports/imports.service';
 import { NotificationsController } from './notifications/notifications.controller';
 import { NotificationsService } from './notifications/notifications.service';
+import { OperationLogsController } from './operation-logs/operation-logs.controller';
+import { OperationLogsService } from './operation-logs/operation-logs.service';
 import { OrdersController } from './orders/orders.controller';
 import { OrdersService } from './orders/orders.service';
 import { BomController } from './products/bom.controller';
@@ -40,6 +42,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
     HealthController,
     ImportsController,
     NotificationsController,
+    OperationLogsController,
     SearchController,
     AuthController,
     BomController,
@@ -56,6 +59,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
     AuthService,
     ImportsService,
     NotificationsService,
+    OperationLogsService,
     JwtStrategy,
     RolesGuard,
     OrdersService,

@@ -111,6 +111,14 @@ body {
   margin-top: 12px;
 }
 
+.json-cell {
+  display: inline-block;
+  max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .import-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

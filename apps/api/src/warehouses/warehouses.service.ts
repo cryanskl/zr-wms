@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { queryDatabase } from '../database';
+import { mapPgConcurrencyError } from '../db-errors';
 import {
   buildCreateWarehouseQuery,
   buildInsertSlotQuery,
@@ -253,5 +254,6 @@ function mapWarehouseError(error: unknown): never {
   if (pgError.code === '23514' || pgError.code === '22P02') {
     throw new BadRequestException(pgError.message ?? '仓库或库位数据不合法');
   }
+  mapPgConcurrencyError(error);
   throw error;
 }

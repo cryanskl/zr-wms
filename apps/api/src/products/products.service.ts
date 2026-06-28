@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { pool, queryDatabase } from '../database';
+import { mapPgConcurrencyError } from '../db-errors';
 import {
   buildBomQuery,
   buildDeleteBomLinesQuery,
@@ -572,5 +573,6 @@ function mapProductError(error: unknown): never {
   if (pgError.code === '23514' || pgError.code === '22P02') {
     throw new BadRequestException(pgError.message ?? '产品数据不合法');
   }
+  mapPgConcurrencyError(error);
   throw error;
 }

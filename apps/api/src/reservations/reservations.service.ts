@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { queryDatabase } from '../database';
+import { mapPgConcurrencyError } from '../db-errors';
 import {
   buildFulfillReservationQuery,
   buildOrderReservationsQuery,
@@ -191,6 +192,12 @@ function mapReservationError(error: unknown): never {
   }
   if (pgError.code === '22P02') {
     throw new BadRequestException(pgError.message ?? '预留参数不合法');
+  }
+
+  try {
+    mapPgConcurrencyError(error);
+  } catch (mapped) {
+    if (mapped !== error) throw mapped;
   }
 
   throw new InternalServerErrorException('预留操作失败');
