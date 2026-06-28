@@ -11,6 +11,8 @@ import { OrdersService } from './orders/orders.service';
 import { BomController } from './products/bom.controller';
 import { ProductsController } from './products/products.controller';
 import { ProductsService } from './products/products.service';
+import { ReservationsController } from './reservations/reservations.controller';
+import { ReservationsService } from './reservations/reservations.service';
 import { SearchController } from './search/search.controller';
 import { SearchService } from './search/search.service';
 import { StockController } from './stock/stock.controller';
@@ -33,6 +35,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
     BomController,
     OrdersController,
     ProductsController,
+    ReservationsController,
     StockController,
     WarehousesController,
   ],
@@ -43,6 +46,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
     RolesGuard,
     OrdersService,
     ProductsService,
+    ReservationsService,
     StockService,
     WarehousesService,
   ],

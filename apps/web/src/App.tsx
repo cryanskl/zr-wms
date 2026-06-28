@@ -68,6 +68,13 @@ import {
   OrderType,
   patchOrder,
 } from './orderApi';
+import {
+  createReservation,
+  fulfillReservation,
+  listOrderReservations,
+  releaseReservation,
+  ReservationRow,
+} from './reservationApi';
 import { SearchResult, searchProducts } from './searchApi';
 import {
   createWarehouse,
@@ -149,6 +156,11 @@ export function App() {
   const [orderLineProductId, setOrderLineProductId] = useState('');
   const [orderLineQty, setOrderLineQty] = useState<number | null>(1);
   const [orderPatch, setOrderPatch] = useState({ partner: '', due_date: '', status: 'PENDING' });
+  const [reservationProductId, setReservationProductId] = useState('');
+  const [reservationWarehouse, setReservationWarehouse] = useState('W1');
+  const [reservationSlotId, setReservationSlotId] = useState<number | null>(null);
+  const [reservationQty, setReservationQty] = useState<number | null>(1);
+  const [reservationBatchId, setReservationBatchId] = useState<number | null>(null);
 
   const searchQuery = useQuery({
     queryKey: ['search', submittedQuery],
@@ -261,6 +273,18 @@ export function App() {
     enabled: Boolean(token && selectedOrderId),
   });
 
+  const orderReservationsQuery = useQuery({
+    queryKey: ['order-reservations', token, selectedOrderId],
+    queryFn: () => listOrderReservations(token, selectedOrderId ?? 0),
+    enabled: Boolean(token && selectedOrderId),
+  });
+
+  const reservationSlotsQuery = useQuery({
+    queryKey: ['slots', token, reservationWarehouse],
+    queryFn: () => getSlots(token, reservationWarehouse),
+    enabled: Boolean(token && reservationWarehouse),
+  });
+
   useEffect(() => {
     if (bomQuery.data) {
       setBomDraftRows(bomQuery.data.map((line) => ({ child_product_id: line.child_product_id, qty: line.qty, seq: line.seq })));
@@ -274,6 +298,7 @@ export function App() {
         due_date: orderDetailQuery.data.due_date ?? '',
         status: orderDetailQuery.data.status,
       });
+      setReservationProductId(orderDetailQuery.data.lines[0]?.product_id ?? '');
     }
   }, [orderDetailQuery.data]);
 
@@ -509,6 +534,54 @@ export function App() {
     onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '更新订单失败' }),
   });
 
+  const createReservationMutation = useMutation({
+    mutationFn: () => {
+      if (!selectedOrderId || !reservationProductId.trim() || !reservationSlotId || !reservationQty || reservationQty <= 0) {
+        throw new Error('请选择订单、产品、库位并填写正数预留数量');
+      }
+      return createReservation(token, {
+        order_id: selectedOrderId,
+        product_id: reservationProductId.trim().toUpperCase(),
+        slot_id: reservationSlotId,
+        qty: reservationQty,
+        batch_id: reservationBatchId,
+      });
+    },
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已预留 #${data.reservation_id}` });
+      void queryClient.invalidateQueries({ queryKey: ['order-reservations'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-summary'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '预留失败' }),
+  });
+
+  const fulfillReservationMutation = useMutation({
+    mutationFn: (reservationId: number) => fulfillReservation(token, reservationId),
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已履约出库，流水 ${data.movement_id}` });
+      void queryClient.invalidateQueries({ queryKey: ['order-reservations'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['low-stock'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '履约失败' }),
+  });
+
+  const releaseReservationMutation = useMutation({
+    mutationFn: (reservationId: number) => releaseReservation(token, reservationId),
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已释放预留 #${data.reservation_id}` });
+      void queryClient.invalidateQueries({ queryKey: ['order-reservations'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-summary'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '释放失败' }),
+  });
+
   const fromSlotOptions = useMemo(() => slotOptions(fromSlotsQuery.data), [fromSlotsQuery.data]);
   const toSlotOptions = useMemo(() => slotOptions(toSlotsQuery.data), [toSlotsQuery.data]);
 
@@ -727,6 +800,7 @@ export function App() {
           <OrderManagement
             orders={ordersQuery.data ?? []}
             detail={orderDetailQuery.data}
+            reservations={orderReservationsQuery.data ?? []}
             selectedOrderId={selectedOrderId}
             typeFilter={orderTypeFilter}
             statusFilter={orderStatusFilter}
@@ -734,15 +808,39 @@ export function App() {
             lineProductId={orderLineProductId}
             lineQty={orderLineQty}
             patch={orderPatch}
-            loading={ordersQuery.isFetching || orderDetailQuery.isFetching}
-            saving={createOrderMutation.isPending || patchOrderMutation.isPending}
+            reservationProductId={reservationProductId}
+            reservationWarehouse={reservationWarehouse}
+            reservationSlotId={reservationSlotId}
+            reservationQty={reservationQty}
+            reservationBatchId={reservationBatchId}
+            warehouseOptions={warehouseOptions}
+            reservationSlotOptions={slotOptions(reservationSlotsQuery.data)}
+            loading={ordersQuery.isFetching || orderDetailQuery.isFetching || orderReservationsQuery.isFetching}
+            saving={
+              createOrderMutation.isPending ||
+              patchOrderMutation.isPending ||
+              createReservationMutation.isPending ||
+              fulfillReservationMutation.isPending ||
+              releaseReservationMutation.isPending
+            }
             onTypeFilterChange={setOrderTypeFilter}
             onStatusFilterChange={setOrderStatusFilter}
-            onSelectOrder={setSelectedOrderId}
+            onSelectOrder={(orderId) => {
+              setSelectedOrderId(orderId);
+              setReservationProductId('');
+              setReservationSlotId(null);
+              setReservationQty(1);
+              setReservationBatchId(null);
+            }}
             onDraftChange={setOrderDraft}
             onLineProductIdChange={setOrderLineProductId}
             onLineQtyChange={setOrderLineQty}
             onPatchChange={setOrderPatch}
+            onReservationProductIdChange={setReservationProductId}
+            onReservationWarehouseChange={setReservationWarehouse}
+            onReservationSlotIdChange={setReservationSlotId}
+            onReservationQtyChange={setReservationQty}
+            onReservationBatchIdChange={setReservationBatchId}
             onAddLine={() => {
               if (!orderLineProductId.trim() || !orderLineQty || orderLineQty <= 0) {
                 setNotice({ type: 'error', message: '请填写订单行产品和正数数量' });
@@ -760,6 +858,17 @@ export function App() {
             }
             onCreate={() => createOrderMutation.mutate()}
             onPatch={() => patchOrderMutation.mutate()}
+            onCreateReservation={() => createReservationMutation.mutate()}
+            onFulfillReservation={(reservationId) =>
+              Modal.confirm({
+                title: '确认履约出库？',
+                content: '履约会消耗冻结预留并通过存储过程生成出库流水。',
+                okText: '履约出库',
+                cancelText: '取消',
+                onOk: () => fulfillReservationMutation.mutate(reservationId),
+              })
+            }
+            onReleaseReservation={(reservationId) => releaseReservationMutation.mutate(reservationId)}
           />
         ) : activeView === 'dashboard' ? (
           <InventoryDashboard
@@ -942,6 +1051,7 @@ function InventoryList({ rows }: { rows: InventoryRow[] }) {
 interface OrderManagementProps {
   orders: OrderSummary[];
   detail: OrderDetail | undefined;
+  reservations: ReservationRow[];
   selectedOrderId: number | null;
   typeFilter: OrderType | undefined;
   statusFilter: string | undefined;
@@ -949,6 +1059,13 @@ interface OrderManagementProps {
   lineProductId: string;
   lineQty: number | null;
   patch: { partner: string; due_date: string; status: string };
+  reservationProductId: string;
+  reservationWarehouse: string;
+  reservationSlotId: number | null;
+  reservationQty: number | null;
+  reservationBatchId: number | null;
+  warehouseOptions: Array<{ value: string; label: string }>;
+  reservationSlotOptions: Array<{ value: number; label: string }>;
   loading: boolean;
   saving: boolean;
   onTypeFilterChange: (value: OrderType | undefined) => void;
@@ -958,15 +1075,24 @@ interface OrderManagementProps {
   onLineProductIdChange: (value: string) => void;
   onLineQtyChange: (value: number | null) => void;
   onPatchChange: (value: { partner: string; due_date: string; status: string }) => void;
+  onReservationProductIdChange: (value: string) => void;
+  onReservationWarehouseChange: (value: string) => void;
+  onReservationSlotIdChange: (value: number | null) => void;
+  onReservationQtyChange: (value: number | null) => void;
+  onReservationBatchIdChange: (value: number | null) => void;
   onAddLine: () => void;
   onRemoveLine: (index: number) => void;
   onCreate: () => void;
   onPatch: () => void;
+  onCreateReservation: () => void;
+  onFulfillReservation: (reservationId: number) => void;
+  onReleaseReservation: (reservationId: number) => void;
 }
 
 function OrderManagement({
   orders,
   detail,
+  reservations,
   selectedOrderId,
   typeFilter,
   statusFilter,
@@ -974,6 +1100,13 @@ function OrderManagement({
   lineProductId,
   lineQty,
   patch,
+  reservationProductId,
+  reservationWarehouse,
+  reservationSlotId,
+  reservationQty,
+  reservationBatchId,
+  warehouseOptions,
+  reservationSlotOptions,
   loading,
   saving,
   onTypeFilterChange,
@@ -983,16 +1116,26 @@ function OrderManagement({
   onLineProductIdChange,
   onLineQtyChange,
   onPatchChange,
+  onReservationProductIdChange,
+  onReservationWarehouseChange,
+  onReservationSlotIdChange,
+  onReservationQtyChange,
+  onReservationBatchIdChange,
   onAddLine,
   onRemoveLine,
   onCreate,
   onPatch,
+  onCreateReservation,
+  onFulfillReservation,
+  onReleaseReservation,
 }: OrderManagementProps) {
   const orderTypeOptions: Array<{ value: OrderType; label: string }> = [
     { value: 'PURCHASE', label: '采购单' },
     { value: 'PRODUCTION', label: '生产单' },
   ];
   const statusOptions = orderStatusOptions(draft.order_type);
+  const reservationProductOptions =
+    detail?.lines.map((line) => ({ value: line.product_id, label: `${line.product_id} ${line.product_name}` })) ?? [];
 
   return (
     <>
@@ -1184,6 +1327,93 @@ function OrderManagement({
                 { title: '行状态', dataIndex: 'line_status' },
               ]}
             />
+
+            <section className="operation-panel">
+              <Title level={5}>预留</Title>
+              <div className="form-grid">
+                <label>
+                  产品
+                  <Select
+                    value={reservationProductId || undefined}
+                    options={reservationProductOptions}
+                    placeholder="选择订单行产品"
+                    onChange={onReservationProductIdChange}
+                  />
+                </label>
+                <label>
+                  仓库
+                  <Select
+                    value={reservationWarehouse}
+                    options={warehouseOptions}
+                    onChange={(value) => {
+                      onReservationWarehouseChange(value);
+                      onReservationSlotIdChange(null);
+                    }}
+                  />
+                </label>
+                <label>
+                  库位
+                  <Select
+                    value={reservationSlotId}
+                    options={reservationSlotOptions}
+                    placeholder="选择库位"
+                    onChange={onReservationSlotIdChange}
+                  />
+                </label>
+                <label>
+                  数量
+                  <InputNumber min={0.0001} value={reservationQty} onChange={onReservationQtyChange} className="full-input" />
+                </label>
+                <label>
+                  批次 ID
+                  <InputNumber min={1} precision={0} value={reservationBatchId} onChange={onReservationBatchIdChange} className="full-input" />
+                </label>
+              </div>
+              <Space className="action-row" wrap>
+                <Button type="primary" disabled={!selectedOrderId} loading={saving} onClick={onCreateReservation}>
+                  创建预留
+                </Button>
+              </Space>
+
+              <Table
+                size="small"
+                className="inventory-table"
+                dataSource={reservations}
+                rowKey="reservation_id"
+                pagination={false}
+                scroll={{ x: 920 }}
+                locale={{ emptyText: '暂无预留' }}
+                columns={[
+                  { title: '预留', dataIndex: 'reservation_id' },
+                  { title: '产品', dataIndex: 'product_id' },
+                  { title: '库位', dataIndex: 'slot_code' },
+                  { title: '数量', dataIndex: 'qty' },
+                  {
+                    title: '状态',
+                    dataIndex: 'status',
+                    render: (value: ReservationRow['status']) => (
+                      <Tag color={value === 'RESERVED' ? 'blue' : value === 'CONSUMED' ? 'green' : 'default'}>{value}</Tag>
+                    ),
+                  },
+                  {
+                    title: '操作',
+                    render: (_, row: ReservationRow) =>
+                      row.status === 'RESERVED' ? (
+                        <Space wrap>
+                          <Button size="small" loading={saving} onClick={() => onFulfillReservation(row.reservation_id)}>
+                            履约
+                          </Button>
+                          <Button size="small" loading={saving} onClick={() => onReleaseReservation(row.reservation_id)}>
+                            释放
+                          </Button>
+                        </Space>
+                      ) : (
+                        '-'
+                      ),
+                  },
+                ]}
+              />
+            </section>
           </>
         ) : (
           <Empty description="选择一个订单后查看详情" />
