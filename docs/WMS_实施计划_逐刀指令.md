@@ -231,7 +231,7 @@ A. 报表与导出（✅ 已完成）：
 - GET /reports/slot-utilization             → 库位利用率
 - POST /export                              → 导出 Excel（库存/流水/报表）
 
-B. 初始数据导入：
+B. 初始数据导入（✅ 已完成）：
 - POST /import/inventory → 初始库存 Excel 导入（批量写 inventory + 对应 stock_movement）。需 ADMIN
 - POST /import/products  → 产品批量导入。需 ADMIN
 - POST /import/bom       → BOM 批量导入，导入后调 fn_regen_path_aliases()。需 ADMIN

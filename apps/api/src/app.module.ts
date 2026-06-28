@@ -6,6 +6,8 @@ import { AuthService } from './auth/auth.service';
 import { JwtStrategy } from './auth/jwt.strategy';
 import { RolesGuard } from './auth/roles.guard';
 import { HealthController } from './health.controller';
+import { ImportsController } from './imports/imports.controller';
+import { ImportsService } from './imports/imports.service';
 import { OrdersController } from './orders/orders.controller';
 import { OrdersService } from './orders/orders.service';
 import { BomController } from './products/bom.controller';
@@ -34,6 +36,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
   ],
   controllers: [
     HealthController,
+    ImportsController,
     SearchController,
     AuthController,
     BomController,
@@ -48,6 +51,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
   providers: [
     SearchService,
     AuthService,
+    ImportsService,
     JwtStrategy,
     RolesGuard,
     OrdersService,

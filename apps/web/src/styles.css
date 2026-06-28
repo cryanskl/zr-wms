@@ -111,6 +111,24 @@ body {
   margin-top: 12px;
 }
 
+.import-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.import-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-height: 150px;
+  padding: 14px;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  background: #fafbfe;
+}
+
 @media (max-width: 640px) {
   .app-shell {
     align-items: start;
@@ -126,6 +144,10 @@ body {
   }
 
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .import-grid {
     grid-template-columns: 1fr;
   }
 }

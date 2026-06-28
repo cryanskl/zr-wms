@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Card, Empty, Form, Input, InputNumber, List, Modal, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Empty, Form, Input, InputNumber, List, Modal, Segmented, Select, Space, Table, Tag, Typography, Upload } from 'antd';
 import {
   ArrowDownToLine,
   ArrowRightLeft,
@@ -14,6 +14,7 @@ import {
   MapPinned,
   PackageSearch,
   ScrollText,
+  UploadCloud,
 } from 'lucide-react';
 import { CurrentUser, login } from './authApi';
 import {
@@ -115,9 +116,10 @@ import {
   ReportRange,
   SlotUtilizationRow,
 } from './reportApi';
+import { ImportResult, ImportType, importExcel } from './importApi';
 
 const { Title, Paragraph, Text } = Typography;
-type ActiveView = 'operations' | 'dashboard' | 'reports' | 'products' | 'warehouses' | 'orders' | 'stocktakes';
+type ActiveView = 'operations' | 'dashboard' | 'reports' | 'imports' | 'products' | 'warehouses' | 'orders' | 'stocktakes';
 
 const matchedLabels: Record<SearchResult['matched'], string> = {
   name: '产品名',
@@ -149,6 +151,7 @@ export function App() {
   const [dashboardQuality, setDashboardQuality] = useState<string | undefined>();
   const [reportRange, setReportRange] = useState<ReportRange>('day');
   const [deadStockDays, setDeadStockDays] = useState<number | null>(90);
+  const [importResult, setImportResult] = useState<{ type: ImportType; result: ImportResult } | null>(null);
   const [productTypeFilter, setProductTypeFilter] = useState<ProductType | undefined>();
   const [productActiveFilter, setProductActiveFilter] = useState<boolean | undefined>(true);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -473,11 +476,39 @@ export function App() {
     onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '导出失败' }),
   });
 
+  const importMutation = useMutation({
+    mutationFn: ({ type, file }: { type: ImportType; file: File }) => importExcel(token, type, file),
+    onSuccess: (result, variables) => {
+      setImportResult({ type: variables.type, result });
+      setNotice({ type: 'success', message: `导入完成：${importTypeLabel(variables.type)} ${result.imported} 行` });
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['low-stock'] });
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
+      void queryClient.invalidateQueries({ queryKey: ['bom'] });
+      void queryClient.invalidateQueries({ queryKey: ['path-aliases'] });
+      void queryClient.invalidateQueries({ queryKey: ['where-used'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+      void queryClient.invalidateQueries({ queryKey: ['period-report'] });
+      void queryClient.invalidateQueries({ queryKey: ['dead-stock'] });
+      void queryClient.invalidateQueries({ queryKey: ['slot-utilization'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '导入失败' }),
+  });
+
   const warehouseOptions = (warehousesQuery.data ?? []).map((item) => ({
     value: item.warehouse_id,
     label: `${item.warehouse_id} ${item.name}`,
   }));
   const canManageProducts = auth?.user.role === 'ADMIN' || auth?.user.role === 'BOSS';
+
+  useEffect(() => {
+    if (activeView === 'imports' && !canManageProducts) {
+      setActiveView('operations');
+    }
+  }, [activeView, canManageProducts]);
 
   const createProductMutation = useMutation({
     mutationFn: () => createProduct(token, productDraft),
@@ -820,6 +851,7 @@ export function App() {
             onClick={() => {
               localStorage.removeItem('zr-wms-auth');
               setAuth(null);
+              setActiveView('operations');
             }}
           >
             退出
@@ -839,6 +871,7 @@ export function App() {
             { label: '盘点', value: 'stocktakes', icon: <ClipboardCheck size={16} /> },
             { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
             { label: '报表', value: 'reports', icon: <BarChart3 size={16} /> },
+            ...(canManageProducts ? [{ label: '导入', value: 'imports', icon: <UploadCloud size={16} /> }] : []),
             { label: '产品管理', value: 'products', icon: <PackageSearch size={16} /> },
             { label: '仓库库位', value: 'warehouses', icon: <MapPinned size={16} /> },
           ]}
@@ -1162,6 +1195,12 @@ export function App() {
             onRangeChange={setReportRange}
             onDeadStockDaysChange={setDeadStockDays}
             onExport={(body) => exportMutation.mutate(body)}
+          />
+        ) : activeView === 'imports' ? (
+          <ImportView
+            result={importResult}
+            importing={importMutation.isPending}
+            onImport={(type, file) => importMutation.mutate({ type, file })}
           />
         ) : activeView === 'products' ? (
           <ProductManagement
@@ -2278,6 +2317,103 @@ function ReportsView({
       </section>
     </>
   );
+}
+
+interface ImportViewProps {
+  result: { type: ImportType; result: ImportResult } | null;
+  importing: boolean;
+  onImport: (type: ImportType, file: File) => void;
+}
+
+function ImportView({ result, importing, onImport }: ImportViewProps) {
+  return (
+    <>
+      <section className="operation-panel">
+        <Title level={4}>Excel 导入</Title>
+        <Alert
+          type="info"
+          showIcon
+          message="导入端点仅管理员及以上可用；初始库存导入会调用 op_inbound 生成库存与流水。"
+        />
+        <div className="import-grid">
+          <ImportUploadCard
+            title="产品批量导入"
+            description="表头：product_id, type, name, safety_stock, remark, has_tube, has_alu_plate, has_dust_cover, attrs"
+            type="products"
+            loading={importing}
+            onImport={onImport}
+          />
+          <ImportUploadCard
+            title="初始库存导入"
+            description="表头：product_id, warehouse_id, slot_id, batch_id, qty, quality, reason"
+            type="inventory"
+            loading={importing}
+            onImport={onImport}
+          />
+          <ImportUploadCard
+            title="BOM 批量导入"
+            description="表头：parent_product_id, child_product_id, qty, seq；导入后自动重算路径别名"
+            type="bom"
+            loading={importing}
+            onImport={onImport}
+          />
+        </div>
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>最近导入结果</Title>
+        {result ? (
+          <Space direction="vertical" size={8}>
+            <Tag color="green">
+              {importTypeLabel(result.type)}：{result.result.imported} 行
+            </Tag>
+            {result.result.product_ids && <Text>产品：{result.result.product_ids.join(', ')}</Text>}
+            {result.result.movement_ids && <Text>流水：{result.result.movement_ids.join(', ')}</Text>}
+            {result.result.parent_product_ids && <Text>BOM 父项：{result.result.parent_product_ids.join(', ')}</Text>}
+            {result.result.regenerated_aliases !== undefined && <Text>路径别名重算：{result.result.regenerated_aliases}</Text>}
+          </Space>
+        ) : (
+          <Empty description="上传 Excel 后显示导入结果" />
+        )}
+      </section>
+    </>
+  );
+}
+
+interface ImportUploadCardProps {
+  title: string;
+  description: string;
+  type: ImportType;
+  loading: boolean;
+  onImport: (type: ImportType, file: File) => void;
+}
+
+function ImportUploadCard({ title, description, type, loading, onImport }: ImportUploadCardProps) {
+  return (
+    <div className="import-card">
+      <Text strong>{title}</Text>
+      <Text type="secondary">{description}</Text>
+      <Upload
+        accept=".xlsx"
+        maxCount={1}
+        showUploadList={false}
+        beforeUpload={(file) => {
+          onImport(type, file);
+          return false;
+        }}
+      >
+        <Button icon={<UploadCloud size={16} />} loading={loading}>
+          上传 Excel
+        </Button>
+      </Upload>
+    </div>
+  );
+}
+
+function importTypeLabel(type: ImportType) {
+  if (type === 'products') return '产品';
+  if (type === 'inventory') return '初始库存';
+  return 'BOM';
 }
 
 interface ProductManagementProps {
