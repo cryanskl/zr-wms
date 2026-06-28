@@ -13,6 +13,8 @@ import { SearchController } from './search/search.controller';
 import { SearchService } from './search/search.service';
 import { StockController } from './stock/stock.controller';
 import { StockService } from './stock/stock.service';
+import { WarehousesController } from './warehouses/warehouses.controller';
+import { WarehousesService } from './warehouses/warehouses.service';
 
 @Module({
   imports: [
@@ -22,7 +24,15 @@ import { StockService } from './stock/stock.service';
       signOptions: { expiresIn: '8h' },
     }),
   ],
-  controllers: [HealthController, SearchController, AuthController, BomController, ProductsController, StockController],
-  providers: [SearchService, AuthService, JwtStrategy, RolesGuard, ProductsService, StockService],
+  controllers: [
+    HealthController,
+    SearchController,
+    AuthController,
+    BomController,
+    ProductsController,
+    StockController,
+    WarehousesController,
+  ],
+  providers: [SearchService, AuthService, JwtStrategy, RolesGuard, ProductsService, StockService, WarehousesService],
 })
 export class AppModule {}

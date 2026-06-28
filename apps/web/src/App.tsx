@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Empty, Form, Input, InputNumber, List, Modal, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
-import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Boxes, ClipboardList, LogOut, PackageSearch } from 'lucide-react';
+import {
+  ArrowDownToLine,
+  ArrowRightLeft,
+  ArrowUpFromLine,
+  Boxes,
+  ClipboardList,
+  LogOut,
+  MapPinned,
+  PackageSearch,
+} from 'lucide-react';
 import { CurrentUser, login } from './authApi';
 import {
   BomLine,
@@ -48,6 +57,18 @@ import {
   transfer,
 } from './operationsApi';
 import { SearchResult, searchProducts } from './searchApi';
+import {
+  createWarehouse,
+  generateSlotsFromTemplate,
+  listSlots,
+  listWarehouses,
+  Slot as StructureSlot,
+  SlotStatus,
+  updateSlot,
+  Warehouse as StructureWarehouse,
+  WarehouseInput,
+  WarehouseType,
+} from './warehouseApi';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -67,7 +88,7 @@ export function App() {
     return raw ? (JSON.parse(raw) as { accessToken: string; user: CurrentUser }) : null;
   });
   const [selectedProduct, setSelectedProduct] = useState<SearchResult | null>(null);
-  const [activeView, setActiveView] = useState<'operations' | 'dashboard' | 'products'>('operations');
+  const [activeView, setActiveView] = useState<'operations' | 'dashboard' | 'products' | 'warehouses'>('operations');
   const [operationType, setOperationType] = useState<'inbound' | 'outbound' | 'transfer'>('inbound');
   const [warehouse, setWarehouse] = useState('W1');
   const [toWarehouse, setToWarehouse] = useState('W1');
@@ -89,6 +110,21 @@ export function App() {
   const [bomChildProductId, setBomChildProductId] = useState('');
   const [bomQty, setBomQty] = useState<number | null>(1);
   const [bomSeq, setBomSeq] = useState<number | null>(1);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string | null>(null);
+  const [warehouseDraft, setWarehouseDraft] = useState<WarehouseInput>({
+    warehouse_id: '',
+    name: '',
+    type: 'NORMAL',
+    has_slots: true,
+  });
+  const [templateRows, setTemplateRows] = useState<number | null>(1);
+  const [templateCols, setTemplateCols] = useState<number | null>(1);
+  const [templateLevels, setTemplateLevels] = useState<number | null>(1);
+  const [templatePositions, setTemplatePositions] = useState<string[]>(['A']);
+  const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
+  const [slotStatus, setSlotStatus] = useState<SlotStatus>('AVAILABLE');
+  const [slotReason, setSlotReason] = useState('');
+  const [slotMergedInto, setSlotMergedInto] = useState<number | null>(null);
 
   const searchQuery = useQuery({
     queryKey: ['search', submittedQuery],
@@ -175,6 +211,18 @@ export function App() {
     queryKey: ['where-used', token, selectedProductId],
     queryFn: () => getWhereUsed(token, selectedProductId ?? '', true),
     enabled: Boolean(token && selectedProductId),
+  });
+
+  const structureWarehousesQuery = useQuery({
+    queryKey: ['structure-warehouses', token],
+    queryFn: () => listWarehouses(token),
+    enabled: Boolean(token),
+  });
+
+  const structureSlotsQuery = useQuery({
+    queryKey: ['structure-slots', token, selectedWarehouseId],
+    queryFn: () => listSlots(token, selectedWarehouseId ?? '', true),
+    enabled: Boolean(token && selectedWarehouseId),
   });
 
   useEffect(() => {
@@ -345,6 +393,49 @@ export function App() {
     onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '重算路径别名失败' }),
   });
 
+  const createWarehouseMutation = useMutation({
+    mutationFn: () => createWarehouse(token, warehouseDraft),
+    onSuccess: (warehouse) => {
+      setNotice({ type: 'success', message: `已新增仓库 ${warehouse.warehouse_id}` });
+      setSelectedWarehouseId(warehouse.warehouse_id);
+      setWarehouseDraft({ warehouse_id: '', name: '', type: 'NORMAL', has_slots: true });
+      void queryClient.invalidateQueries({ queryKey: ['warehouses'] });
+      void queryClient.invalidateQueries({ queryKey: ['structure-warehouses'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '新增仓库失败' }),
+  });
+
+  const generateSlotsMutation = useMutation({
+    mutationFn: () =>
+      generateSlotsFromTemplate(token, selectedWarehouseId ?? '', {
+        rows: templateRows ?? 0,
+        cols: templateCols ?? 0,
+        levels: templateLevels ?? 0,
+        positions: templatePositions,
+      }),
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已生成 ${data.created} 个库位` });
+      void queryClient.invalidateQueries({ queryKey: ['slots'] });
+      void queryClient.invalidateQueries({ queryKey: ['structure-slots'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '生成库位失败' }),
+  });
+
+  const updateSlotMutation = useMutation({
+    mutationFn: () =>
+      updateSlot(token, selectedSlotId ?? 0, {
+        status: slotStatus,
+        status_reason: slotReason || null,
+        merged_into: slotMergedInto,
+      }),
+    onSuccess: (slot) => {
+      setNotice({ type: 'success', message: `已更新库位 ${slot.code}` });
+      void queryClient.invalidateQueries({ queryKey: ['slots'] });
+      void queryClient.invalidateQueries({ queryKey: ['structure-slots'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '更新库位失败' }),
+  });
+
   const fromSlotOptions = useMemo(() => slotOptions(fromSlotsQuery.data), [fromSlotsQuery.data]);
   const toSlotOptions = useMemo(() => slotOptions(toSlotsQuery.data), [toSlotsQuery.data]);
 
@@ -401,11 +492,12 @@ export function App() {
           block
           className="view-switch"
           value={activeView}
-          onChange={(value) => setActiveView(value as 'operations' | 'dashboard' | 'products')}
+          onChange={(value) => setActiveView(value as 'operations' | 'dashboard' | 'products' | 'warehouses')}
           options={[
             { label: '出入库', value: 'operations', icon: <ClipboardList size={16} /> },
             { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
             { label: '产品管理', value: 'products', icon: <PackageSearch size={16} /> },
+            { label: '仓库库位', value: 'warehouses', icon: <MapPinned size={16} /> },
           ]}
         />
 
@@ -579,7 +671,7 @@ export function App() {
             onWarehouseChange={setDashboardWarehouse}
             onQualityChange={setDashboardQuality}
           />
-        ) : (
+        ) : activeView === 'products' ? (
           <ProductManagement
             canManage={canManageProducts}
             products={productsQuery.data ?? []}
@@ -660,6 +752,42 @@ export function App() {
               })
             }
             onRegenerateAliases={() => regenerateAliasesMutation.mutate()}
+          />
+        ) : (
+          <WarehouseManagement
+            canManage={canManageProducts}
+            warehouses={structureWarehousesQuery.data ?? []}
+            slots={structureSlotsQuery.data ?? []}
+            selectedWarehouseId={selectedWarehouseId}
+            selectedSlotId={selectedSlotId}
+            warehouseDraft={warehouseDraft}
+            templateRows={templateRows}
+            templateCols={templateCols}
+            templateLevels={templateLevels}
+            templatePositions={templatePositions}
+            slotStatus={slotStatus}
+            slotReason={slotReason}
+            slotMergedInto={slotMergedInto}
+            loading={structureWarehousesQuery.isFetching || structureSlotsQuery.isFetching}
+            saving={createWarehouseMutation.isPending || generateSlotsMutation.isPending || updateSlotMutation.isPending}
+            onSelectWarehouse={setSelectedWarehouseId}
+            onWarehouseDraftChange={setWarehouseDraft}
+            onTemplateRowsChange={setTemplateRows}
+            onTemplateColsChange={setTemplateCols}
+            onTemplateLevelsChange={setTemplateLevels}
+            onTemplatePositionsChange={setTemplatePositions}
+            onSelectSlot={(slot) => {
+              setSelectedSlotId(slot.slot_id);
+              setSlotStatus(slot.status);
+              setSlotReason(slot.status_reason ?? '');
+              setSlotMergedInto(slot.merged_into);
+            }}
+            onSlotStatusChange={setSlotStatus}
+            onSlotReasonChange={setSlotReason}
+            onSlotMergedIntoChange={setSlotMergedInto}
+            onCreateWarehouse={() => createWarehouseMutation.mutate()}
+            onGenerateSlots={() => generateSlotsMutation.mutate()}
+            onUpdateSlot={() => updateSlotMutation.mutate()}
           />
         )}
       </Card>
@@ -1231,6 +1359,287 @@ function ProductManagement({
       </section>
     </>
   );
+}
+
+interface WarehouseManagementProps {
+  canManage: boolean;
+  warehouses: StructureWarehouse[];
+  slots: StructureSlot[];
+  selectedWarehouseId: string | null;
+  selectedSlotId: number | null;
+  warehouseDraft: WarehouseInput;
+  templateRows: number | null;
+  templateCols: number | null;
+  templateLevels: number | null;
+  templatePositions: string[];
+  slotStatus: SlotStatus;
+  slotReason: string;
+  slotMergedInto: number | null;
+  loading: boolean;
+  saving: boolean;
+  onSelectWarehouse: (value: string) => void;
+  onWarehouseDraftChange: (value: WarehouseInput) => void;
+  onTemplateRowsChange: (value: number | null) => void;
+  onTemplateColsChange: (value: number | null) => void;
+  onTemplateLevelsChange: (value: number | null) => void;
+  onTemplatePositionsChange: (value: string[]) => void;
+  onSelectSlot: (slot: StructureSlot) => void;
+  onSlotStatusChange: (value: SlotStatus) => void;
+  onSlotReasonChange: (value: string) => void;
+  onSlotMergedIntoChange: (value: number | null) => void;
+  onCreateWarehouse: () => void;
+  onGenerateSlots: () => void;
+  onUpdateSlot: () => void;
+}
+
+function WarehouseManagement({
+  canManage,
+  warehouses,
+  slots,
+  selectedWarehouseId,
+  selectedSlotId,
+  warehouseDraft,
+  templateRows,
+  templateCols,
+  templateLevels,
+  templatePositions,
+  slotStatus,
+  slotReason,
+  slotMergedInto,
+  loading,
+  saving,
+  onSelectWarehouse,
+  onWarehouseDraftChange,
+  onTemplateRowsChange,
+  onTemplateColsChange,
+  onTemplateLevelsChange,
+  onTemplatePositionsChange,
+  onSelectSlot,
+  onSlotStatusChange,
+  onSlotReasonChange,
+  onSlotMergedIntoChange,
+  onCreateWarehouse,
+  onGenerateSlots,
+  onUpdateSlot,
+}: WarehouseManagementProps) {
+  const selectedWarehouse = warehouses.find((item) => item.warehouse_id === selectedWarehouseId);
+  const selectedSlot = slots.find((item) => item.slot_id === selectedSlotId);
+  const warehouseTypeOptions: Array<{ value: WarehouseType; label: string }> = [
+    { value: 'NORMAL', label: '普通仓' },
+    { value: 'MOLD', label: '模具仓' },
+    { value: 'OUTSOURCE', label: '外协仓' },
+  ];
+  const slotStatusOptions: Array<{ value: SlotStatus; label: string }> = [
+    { value: 'AVAILABLE', label: '可用' },
+    { value: 'OCCUPIED', label: '占用' },
+    { value: 'UNUSABLE', label: '不可用' },
+    { value: 'MERGED', label: '已合并' },
+  ];
+
+  return (
+    <>
+      <section className="operation-panel">
+        <Title level={4}>仓库结构</Title>
+        {!canManage && <Alert className="form-alert" type="info" showIcon message="当前角色只能查看仓库与库位" />}
+        <Table
+          size="small"
+          className="inventory-table"
+          loading={loading}
+          dataSource={warehouses}
+          rowKey="warehouse_id"
+          pagination={false}
+          scroll={{ x: 680 }}
+          columns={[
+            {
+              title: '仓库',
+              dataIndex: 'warehouse_id',
+              render: (value: string, row) => (
+                <Button type="link" className="table-link-button" onClick={() => onSelectWarehouse(row.warehouse_id)}>
+                  {value}
+                </Button>
+              ),
+            },
+            { title: '名称', dataIndex: 'name' },
+            { title: '类型', dataIndex: 'type' },
+            {
+              title: '库位',
+              dataIndex: 'has_slots',
+              render: (value: boolean) => <Tag color={value ? 'green' : 'default'}>{value ? '有库位' : '无库位'}</Tag>,
+            },
+          ]}
+        />
+
+        <div className="form-grid">
+          <label>
+            仓库 ID
+            <Input
+              disabled={!canManage}
+              value={warehouseDraft.warehouse_id}
+              placeholder="例如 W4"
+              onChange={(event) => onWarehouseDraftChange({ ...warehouseDraft, warehouse_id: event.target.value })}
+            />
+          </label>
+          <label>
+            名称
+            <Input
+              disabled={!canManage}
+              value={warehouseDraft.name}
+              onChange={(event) => onWarehouseDraftChange({ ...warehouseDraft, name: event.target.value })}
+            />
+          </label>
+          <label>
+            类型
+            <Select
+              disabled={!canManage}
+              value={warehouseDraft.type}
+              options={warehouseTypeOptions}
+              onChange={(value) =>
+                onWarehouseDraftChange({ ...warehouseDraft, type: value, has_slots: value === 'OUTSOURCE' ? false : warehouseDraft.has_slots })
+              }
+            />
+          </label>
+          <label>
+            是否有库位
+            <Select
+              disabled={!canManage || warehouseDraft.type === 'OUTSOURCE'}
+              value={warehouseDraft.has_slots}
+              options={[
+                { value: true, label: '有库位' },
+                { value: false, label: '无库位' },
+              ]}
+              onChange={(value) => onWarehouseDraftChange({ ...warehouseDraft, has_slots: value })}
+            />
+          </label>
+        </div>
+        <Space className="action-row" wrap>
+          <Button type="primary" disabled={!canManage} loading={saving} onClick={onCreateWarehouse}>
+            新增仓库
+          </Button>
+        </Space>
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>库位模板</Title>
+        <div className="selected-product">
+          {selectedWarehouse ? `${selectedWarehouse.warehouse_id} / ${selectedWarehouse.name}` : '请选择仓库'}
+        </div>
+        {selectedWarehouse && !selectedWarehouse.has_slots && (
+          <Alert className="form-alert" type="warning" showIcon message="外协仓不生成库位" />
+        )}
+        <div className="form-grid">
+          <label>
+            排数
+            <InputNumber disabled={!canManage} min={1} precision={0} value={templateRows} onChange={onTemplateRowsChange} className="full-input" />
+          </label>
+          <label>
+            列数
+            <InputNumber disabled={!canManage} min={1} precision={0} value={templateCols} onChange={onTemplateColsChange} className="full-input" />
+          </label>
+          <label>
+            层数
+            <InputNumber disabled={!canManage} min={1} precision={0} value={templateLevels} onChange={onTemplateLevelsChange} className="full-input" />
+          </label>
+          <label>
+            位置
+            <Select
+              disabled={!canManage}
+              mode="multiple"
+              value={templatePositions}
+              options={[
+                { value: 'A', label: 'A' },
+                { value: 'B', label: 'B' },
+                { value: 'C', label: 'C' },
+              ]}
+              onChange={onTemplatePositionsChange}
+            />
+          </label>
+        </div>
+        <Space className="action-row" wrap>
+          <Button
+            disabled={!canManage || !selectedWarehouseId || selectedWarehouse?.has_slots === false}
+            loading={saving}
+            onClick={onGenerateSlots}
+          >
+            生成库位
+          </Button>
+        </Space>
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>库位状态</Title>
+        <Table
+          size="small"
+          className="inventory-table"
+          loading={loading}
+          dataSource={slots}
+          rowKey="slot_id"
+          pagination={false}
+          scroll={{ x: 860 }}
+          locale={{ emptyText: selectedWarehouseId ? '暂无库位' : '请选择仓库' }}
+          columns={[
+            {
+              title: '库位',
+              dataIndex: 'code',
+              render: (value: string, row) => (
+                <Button type="link" className="table-link-button" onClick={() => onSelectSlot(row)}>
+                  {value}
+                </Button>
+              ),
+            },
+            { title: '排', dataIndex: 'row_no' },
+            { title: '列', dataIndex: 'col_no' },
+            { title: '层', dataIndex: 'level_no' },
+            { title: '位置', dataIndex: 'position' },
+            {
+              title: '状态',
+              dataIndex: 'status',
+              render: (value: SlotStatus) => <Tag color={slotStatusColor(value)}>{value}</Tag>,
+            },
+            {
+              title: '原因',
+              dataIndex: 'status_reason',
+              render: (value: string | null) => value ?? '-',
+            },
+            {
+              title: '合并至',
+              dataIndex: 'merged_into',
+              render: (value: number | null) => value ?? '-',
+            },
+          ]}
+        />
+
+        <div className="selected-product">
+          {selectedSlot ? `${selectedSlot.slot_id} / ${selectedSlot.code}` : '请选择库位'}
+        </div>
+        <div className="form-grid">
+          <label>
+            状态
+            <Select disabled={!canManage} value={slotStatus} options={slotStatusOptions} onChange={onSlotStatusChange} />
+          </label>
+          <label>
+            合并目标库位 ID
+            <InputNumber disabled={!canManage || slotStatus !== 'MERGED'} min={1} precision={0} value={slotMergedInto} onChange={onSlotMergedIntoChange} className="full-input" />
+          </label>
+          <label>
+            原因
+            <Input disabled={!canManage} value={slotReason} onChange={(event) => onSlotReasonChange(event.target.value)} />
+          </label>
+        </div>
+        <Space className="action-row" wrap>
+          <Button type="primary" disabled={!canManage || !selectedSlotId} loading={saving} onClick={onUpdateSlot}>
+            更新库位状态
+          </Button>
+        </Space>
+      </section>
+    </>
+  );
+}
+
+function slotStatusColor(status: SlotStatus) {
+  if (status === 'AVAILABLE') return 'green';
+  if (status === 'UNUSABLE') return 'red';
+  if (status === 'MERGED') return 'purple';
+  return 'orange';
 }
 
 function productToInput(product: ProductSummary): ProductInput {

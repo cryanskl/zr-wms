@@ -121,22 +121,6 @@ export class StockController {
     }));
   }
 
-  @Get('warehouses')
-  async warehouses() {
-    const result = await queryDatabase<{ warehouse_id: string; name: string; has_slots: boolean }>(
-      'SELECT warehouse_id, name, has_slots FROM warehouse ORDER BY warehouse_id',
-    );
-    return result.rows;
-  }
-
-  @Get('warehouses/:warehouseId/slots')
-  async slots(@Param('warehouseId') warehouseId: string) {
-    const result = await queryDatabase<{ slot_id: string; code: string }>(
-      'SELECT slot_id::text, code FROM slot WHERE warehouse_id = $1 ORDER BY code',
-      [warehouseId],
-    );
-    return result.rows.map((row) => ({ slot_id: Number(row.slot_id), code: row.code }));
-  }
 }
 
 function mapInventoryRow(row: InventoryRow) {
