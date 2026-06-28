@@ -1,8 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Card, Empty, Form, Input, InputNumber, List, Modal, Segmented, Select, Space, Tag, Typography } from 'antd';
-import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, LogOut } from 'lucide-react';
+import { Alert, Button, Card, Empty, Form, Input, InputNumber, List, Modal, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
+import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Boxes, ClipboardList, LogOut } from 'lucide-react';
 import { CurrentUser, login } from './authApi';
+import {
+  getInventoryDashboard,
+  getInventorySummary,
+  getLowStock,
+  InventoryDashboardRow,
+  InventorySummary,
+  LowStockRow,
+} from './inventoryApi';
 import {
   getInventory,
   getSlots,
@@ -34,6 +42,7 @@ export function App() {
     return raw ? (JSON.parse(raw) as { accessToken: string; user: CurrentUser }) : null;
   });
   const [selectedProduct, setSelectedProduct] = useState<SearchResult | null>(null);
+  const [activeView, setActiveView] = useState<'operations' | 'dashboard'>('operations');
   const [operationType, setOperationType] = useState<'inbound' | 'outbound' | 'transfer'>('inbound');
   const [warehouse, setWarehouse] = useState('W1');
   const [toWarehouse, setToWarehouse] = useState('W1');
@@ -42,6 +51,9 @@ export function App() {
   const [qty, setQty] = useState<number | null>(100);
   const [reason, setReason] = useState('手工操作');
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [dashboardProduct, setDashboardProduct] = useState('');
+  const [dashboardWarehouse, setDashboardWarehouse] = useState<string | undefined>();
+  const [dashboardQuality, setDashboardQuality] = useState<string | undefined>();
 
   const searchQuery = useQuery({
     queryKey: ['search', submittedQuery],
@@ -75,6 +87,29 @@ export function App() {
     queryKey: ['inventory', token, selectedProduct?.product_id],
     queryFn: () => getInventory(token, selectedProduct?.product_id),
     enabled: Boolean(token && selectedProduct),
+  });
+
+  const dashboardInventoryQuery = useQuery({
+    queryKey: ['inventory-dashboard', token, dashboardProduct, dashboardWarehouse, dashboardQuality],
+    queryFn: () =>
+      getInventoryDashboard(token, {
+        product: dashboardProduct.trim() || undefined,
+        warehouse: dashboardWarehouse,
+        quality: dashboardQuality,
+      }),
+    enabled: Boolean(token),
+  });
+
+  const inventorySummaryQuery = useQuery({
+    queryKey: ['inventory-summary', token, dashboardProduct],
+    queryFn: () => getInventorySummary(token, dashboardProduct.trim() || undefined),
+    enabled: Boolean(token),
+  });
+
+  const lowStockQuery = useQuery({
+    queryKey: ['low-stock', token],
+    queryFn: () => getLowStock(token),
+    enabled: Boolean(token),
   });
 
   const loginMutation = useMutation({
@@ -137,6 +172,9 @@ export function App() {
       const movementText = 'movementId' in data ? data.movementId : data.movementIds.join(', ');
       setNotice({ type: 'success', message: `操作成功，流水 ${movementText}` });
       void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['low-stock'] });
     },
     onError: (error) =>
       setNotice({ type: 'error', message: error instanceof Error ? error.message : '操作失败，请检查输入' }),
@@ -199,151 +237,188 @@ export function App() {
 
         {notice && <Alert className="form-alert" type={notice.type} showIcon message={notice.message} />}
 
-        <Title level={4}>选择产品</Title>
-        <Input.Search
-          allowClear
-          enterButton="搜索"
-          placeholder="例如：399 151、带管子、FG-7L0199131F-1-1"
-          size="large"
-          value={inputValue}
-          onChange={(event) => setInputValue(event.target.value)}
-          onSearch={(value) => setSubmittedQuery(value.trim())}
-          loading={searchQuery.isFetching}
+        <Segmented
+          block
+          className="view-switch"
+          value={activeView}
+          onChange={(value) => setActiveView(value as 'operations' | 'dashboard')}
+          options={[
+            { label: '出入库', value: 'operations', icon: <ClipboardList size={16} /> },
+            { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
+          ]}
         />
 
-        <section className="results-region">
-          {!submittedQuery ? (
-            <Empty description="输入关键词后点击搜索" />
-          ) : searchQuery.isError ? (
-            <Alert
-              type="error"
-              showIcon
-              message="搜索失败"
-              description={searchQuery.error instanceof Error ? searchQuery.error.message : '请检查后端服务'}
+        {activeView === 'operations' ? (
+          <>
+            <Title level={4}>选择产品</Title>
+            <Input.Search
+              allowClear
+              enterButton="搜索"
+              placeholder="例如：399 151、带管子、FG-7L0199131F-1-1"
+              size="large"
+              value={inputValue}
+              onChange={(event) => setInputValue(event.target.value)}
+              onSearch={(value) => setSubmittedQuery(value.trim())}
+              loading={searchQuery.isFetching}
             />
-          ) : (
-            <>
-              <Text type="secondary">
-                {searchQuery.isFetching ? '搜索中...' : `“${submittedQuery}” 找到 ${results.length} 条结果`}
-              </Text>
-              <List
-                className="results-list"
-                dataSource={results}
-                locale={{ emptyText: '没有匹配结果' }}
-                renderItem={(item) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      title={
-                        <Space size={8} wrap>
-                          <Text strong>{item.product_id}</Text>
-                          <Text>{item.name}</Text>
-                          <Tag>{matchedLabels[item.matched]}</Tag>
-                          <Button size="small" onClick={() => setSelectedProduct(item)}>
-                            选择
-                          </Button>
-                        </Space>
-                      }
-                      description={
-                        <Space direction="vertical" size={2}>
-                          <Text>{item.snippet}</Text>
-                          <Text type="secondary">score {Number(item.score).toFixed(3)}</Text>
-                        </Space>
-                      }
-                    />
-                  </List.Item>
-                )}
-              />
-            </>
-          )}
-        </section>
 
-        <section className="operation-panel">
-          <Title level={4}>库存操作</Title>
-          <div className="selected-product">
-            {selectedProduct ? searchResultLabel(selectedProduct) : '尚未选择产品'}
-          </div>
-          <Segmented
-            block
-            value={operationType}
-            onChange={(value) => setOperationType(value as 'inbound' | 'outbound' | 'transfer')}
-            options={[
-              { label: '入库', value: 'inbound', icon: <ArrowDownToLine size={16} /> },
-              { label: '出库', value: 'outbound', icon: <ArrowUpFromLine size={16} /> },
-              { label: '移库', value: 'transfer', icon: <ArrowRightLeft size={16} /> },
-            ]}
-          />
+            <section className="results-region">
+              {!submittedQuery ? (
+                <Empty description="输入关键词后点击搜索" />
+              ) : searchQuery.isError ? (
+                <Alert
+                  type="error"
+                  showIcon
+                  message="搜索失败"
+                  description={searchQuery.error instanceof Error ? searchQuery.error.message : '请检查后端服务'}
+                />
+              ) : (
+                <>
+                  <Text type="secondary">
+                    {searchQuery.isFetching ? '搜索中...' : `“${submittedQuery}” 找到 ${results.length} 条结果`}
+                  </Text>
+                  <List
+                    className="results-list"
+                    dataSource={results}
+                    locale={{ emptyText: '没有匹配结果' }}
+                    renderItem={(item) => (
+                      <List.Item>
+                        <List.Item.Meta
+                          title={
+                            <Space size={8} wrap>
+                              <Text strong>{item.product_id}</Text>
+                              <Text>{item.name}</Text>
+                              <Tag>{matchedLabels[item.matched]}</Tag>
+                              <Button size="small" onClick={() => setSelectedProduct(item)}>
+                                选择
+                              </Button>
+                            </Space>
+                          }
+                          description={
+                            <Space direction="vertical" size={2}>
+                              <Text>{item.snippet}</Text>
+                              <Text type="secondary">score {Number(item.score).toFixed(3)}</Text>
+                            </Space>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </>
+              )}
+            </section>
 
-          <div className="form-grid">
-            <label>
-              仓库
-              <Select value={warehouse} options={warehouseOptions} onChange={setWarehouse} />
-            </label>
-            <label>
-              库位
-              <Select
-                value={slot}
-                options={fromSlotOptions}
-                placeholder="选择库位"
-                onChange={setSlot}
-                loading={fromSlotsQuery.isFetching}
+            <section className="operation-panel">
+              <Title level={4}>库存操作</Title>
+              <div className="selected-product">
+                {selectedProduct ? searchResultLabel(selectedProduct) : '尚未选择产品'}
+              </div>
+              <Segmented
+                block
+                value={operationType}
+                onChange={(value) => setOperationType(value as 'inbound' | 'outbound' | 'transfer')}
+                options={[
+                  { label: '入库', value: 'inbound', icon: <ArrowDownToLine size={16} /> },
+                  { label: '出库', value: 'outbound', icon: <ArrowUpFromLine size={16} /> },
+                  { label: '移库', value: 'transfer', icon: <ArrowRightLeft size={16} /> },
+                ]}
               />
-            </label>
-            {operationType === 'transfer' && (
-              <>
+
+              <div className="form-grid">
                 <label>
-                  目标仓库
-                  <Select value={toWarehouse} options={warehouseOptions} onChange={setToWarehouse} />
+                  仓库
+                  <Select value={warehouse} options={warehouseOptions} onChange={setWarehouse} />
                 </label>
                 <label>
-                  目标库位
+                  库位
                   <Select
-                    value={toSlot}
-                    options={toSlotOptions}
-                    placeholder="选择目标库位"
-                    onChange={setToSlot}
-                    loading={toSlotsQuery.isFetching}
+                    value={slot}
+                    options={fromSlotOptions}
+                    placeholder="选择库位"
+                    onChange={setSlot}
+                    loading={fromSlotsQuery.isFetching}
                   />
                 </label>
-              </>
-            )}
-            <label>
-              数量
-              <InputNumber min={0.0001} value={qty} onChange={setQty} className="full-input" />
-            </label>
-            <label>
-              原因
-              <Input value={reason} onChange={(event) => setReason(event.target.value)} />
-            </label>
-          </div>
+                {operationType === 'transfer' && (
+                  <>
+                    <label>
+                      目标仓库
+                      <Select value={toWarehouse} options={warehouseOptions} onChange={setToWarehouse} />
+                    </label>
+                    <label>
+                      目标库位
+                      <Select
+                        value={toSlot}
+                        options={toSlotOptions}
+                        placeholder="选择目标库位"
+                        onChange={setToSlot}
+                        loading={toSlotsQuery.isFetching}
+                      />
+                    </label>
+                  </>
+                )}
+                <label>
+                  数量
+                  <InputNumber min={0.0001} value={qty} onChange={setQty} className="full-input" />
+                </label>
+                <label>
+                  原因
+                  <Input value={reason} onChange={(event) => setReason(event.target.value)} />
+                </label>
+              </div>
 
-          <Space className="action-row" wrap>
-            <Button type="primary" loading={operationMutation.isPending} onClick={() => operationMutation.mutate({})}>
-              提交{operationType === 'inbound' ? '入库' : operationType === 'outbound' ? '出库' : '移库'}
-            </Button>
-            {operationType === 'outbound' && isAdmin && (
-              <Button
-                danger
-                loading={operationMutation.isPending}
-                onClick={() =>
-                  Modal.confirm({
-                    title: '确认强制出库？',
-                    content: '强制出库允许库存变成负数，仅管理员可执行。',
-                    okText: '确认强制出库',
-                    cancelText: '取消',
-                    onOk: () => operationMutation.mutate({ force: true }),
-                  })
-                }
-              >
-                强制出库
-              </Button>
-            )}
-          </Space>
-        </section>
+              <Space className="action-row" wrap>
+                <Button type="primary" loading={operationMutation.isPending} onClick={() => operationMutation.mutate({})}>
+                  提交{operationType === 'inbound' ? '入库' : operationType === 'outbound' ? '出库' : '移库'}
+                </Button>
+                {operationType === 'outbound' && isAdmin && (
+                  <Button
+                    danger
+                    loading={operationMutation.isPending}
+                    onClick={() =>
+                      Modal.confirm({
+                        title: '确认强制出库？',
+                        content: '强制出库允许库存变成负数，仅管理员可执行。',
+                        okText: '确认强制出库',
+                        cancelText: '取消',
+                        onOk: () => operationMutation.mutate({ force: true }),
+                      })
+                    }
+                  >
+                    强制出库
+                  </Button>
+                )}
+              </Space>
+            </section>
 
-        <section className="operation-panel">
-          <Title level={4}>当前库存</Title>
-          <InventoryList rows={inventoryQuery.data ?? []} />
-        </section>
+            <section className="operation-panel">
+              <Title level={4}>当前库存</Title>
+              <InventoryList rows={inventoryQuery.data ?? []} />
+            </section>
+          </>
+        ) : (
+          <InventoryDashboard
+            dashboardProduct={dashboardProduct}
+            dashboardWarehouse={dashboardWarehouse}
+            dashboardQuality={dashboardQuality}
+            warehouseOptions={warehouseOptions}
+            inventoryRows={dashboardInventoryQuery.data ?? []}
+            summary={inventorySummaryQuery.data}
+            lowStockRows={lowStockQuery.data ?? []}
+            loading={dashboardInventoryQuery.isFetching || inventorySummaryQuery.isFetching}
+            lowStockLoading={lowStockQuery.isFetching}
+            error={
+              dashboardInventoryQuery.error instanceof Error
+                ? dashboardInventoryQuery.error.message
+                : lowStockQuery.error instanceof Error
+                  ? lowStockQuery.error.message
+                  : null
+            }
+            onProductChange={setDashboardProduct}
+            onWarehouseChange={setDashboardWarehouse}
+            onQualityChange={setDashboardQuality}
+          />
+        )}
       </Card>
     </main>
   );
@@ -378,5 +453,146 @@ function InventoryList({ rows }: { rows: InventoryRow[] }) {
         </List.Item>
       )}
     />
+  );
+}
+
+interface InventoryDashboardProps {
+  dashboardProduct: string;
+  dashboardWarehouse?: string;
+  dashboardQuality?: string;
+  warehouseOptions: Array<{ value: string; label: string }>;
+  inventoryRows: InventoryDashboardRow[];
+  summary: InventorySummary | undefined;
+  lowStockRows: LowStockRow[];
+  loading: boolean;
+  lowStockLoading: boolean;
+  error: string | null;
+  onProductChange: (value: string) => void;
+  onWarehouseChange: (value: string | undefined) => void;
+  onQualityChange: (value: string | undefined) => void;
+}
+
+function InventoryDashboard({
+  dashboardProduct,
+  dashboardWarehouse,
+  dashboardQuality,
+  warehouseOptions,
+  inventoryRows,
+  summary,
+  lowStockRows,
+  loading,
+  lowStockLoading,
+  error,
+  onProductChange,
+  onWarehouseChange,
+  onQualityChange,
+}: InventoryDashboardProps) {
+  return (
+    <>
+      <section className="operation-panel">
+        <Title level={4}>库存看板</Title>
+        {error && <Alert className="form-alert" type="error" showIcon message="库存查询失败" description={error} />}
+        <div className="form-grid">
+          <label>
+            产品 ID
+            <Input
+              allowClear
+              value={dashboardProduct}
+              placeholder="例如 RM-0123"
+              onChange={(event) => onProductChange(event.target.value)}
+            />
+          </label>
+          <label>
+            仓库
+            <Select
+              allowClear
+              value={dashboardWarehouse}
+              options={warehouseOptions}
+              placeholder="全部仓库"
+              onChange={onWarehouseChange}
+            />
+          </label>
+          <label>
+            质量态
+            <Select
+              allowClear
+              value={dashboardQuality}
+              placeholder="全部质量态"
+              onChange={onQualityChange}
+              options={[
+                { value: 'GOOD', label: '良品' },
+                { value: 'DEFECTIVE', label: '不良' },
+                { value: 'UNUSABLE', label: '不可用' },
+              ]}
+            />
+          </label>
+        </div>
+
+        <Space className="summary-row" wrap>
+          <Tag color="blue">总库存 {summary?.total ?? 0}</Tag>
+          <Tag color="green">可用 {summary?.available ?? 0}</Tag>
+          <Tag color="orange">冻结 {summary?.frozen ?? 0}</Tag>
+        </Space>
+
+        <Table
+          size="small"
+          className="inventory-table"
+          loading={loading}
+          dataSource={inventoryRows}
+          rowKey="inventory_id"
+          pagination={false}
+          scroll={{ x: 760 }}
+          columns={[
+            {
+              title: '产品',
+              dataIndex: 'product_id',
+              render: (value: string, row) => (
+                <Space direction="vertical" size={0}>
+                  <Text strong>{value}</Text>
+                  <Text type="secondary">{row.product_name}</Text>
+                </Space>
+              ),
+            },
+            { title: '仓库', dataIndex: 'warehouse_id' },
+            {
+              title: '库位',
+              dataIndex: 'slot_code',
+              render: (value: string | null) => value ?? '无',
+            },
+            { title: '质量态', dataIndex: 'quality' },
+            { title: '在库', dataIndex: 'qty_on_hand' },
+            { title: '可用', dataIndex: 'available' },
+            { title: '冻结', dataIndex: 'frozen' },
+          ]}
+        />
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>低库存预警</Title>
+        <Alert
+          type={lowStockRows.length > 0 ? 'warning' : 'success'}
+          showIcon
+          message={lowStockRows.length > 0 ? `有 ${lowStockRows.length} 个产品低于安全库存` : '当前没有低库存预警'}
+        />
+        <List
+          className="warning-list"
+          loading={lowStockLoading}
+          dataSource={lowStockRows}
+          locale={{ emptyText: '无低库存产品' }}
+          renderItem={(item) => (
+            <List.Item>
+              <Space direction="vertical" size={2}>
+                <Text strong>
+                  {item.product_id} / {item.product_name}
+                </Text>
+                <Text>
+                  当前 {item.qty_on_hand}，安全库存 {item.safety_stock}，缺口 {item.shortage}
+                </Text>
+              </Space>
+            </List.Item>
+          )}
+        />
+      </section>
+    </>
   );
 }

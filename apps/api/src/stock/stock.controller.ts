@@ -2,15 +2,41 @@ import { Body, Controller, ForbiddenException, Get, Inject, Param, Post, Query, 
 import { queryDatabase } from '../database';
 import { CurrentUser } from '../auth/current-user';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import {
+  buildInventoryQuery,
+  buildInventorySummaryQuery,
+  buildLowStockQuery,
+  buildProductLocationsQuery,
+  buildSlotProductsQuery,
+} from './stock-read-queries';
 import { StockOperationBody, StockService, TransferBody } from './stock.service';
 
 interface InventoryRow {
+  inventory_id: string;
   product_id: string;
+  product_name: string;
   warehouse_id: string;
+  warehouse_name: string;
   slot_id: string | null;
+  slot_code: string | null;
   quality: string;
   qty_on_hand: string;
   available: string;
+  frozen: string;
+}
+
+interface InventorySummaryRow {
+  total: string;
+  available: string;
+  frozen: string;
+}
+
+interface LowStockRow {
+  product_id: string;
+  product_name: string;
+  safety_stock: string;
+  qty_on_hand: string;
+  shortage: string;
 }
 
 @UseGuards(JwtAuthGuard)
@@ -42,39 +68,56 @@ export class StockController {
     return this.stockService.transfer(body, request.user.userId);
   }
 
-  @Get('inventory')
-  async inventory(@Query('product') product?: string, @Query('warehouse') warehouse?: string, @Query('slot') slot?: string) {
-    const result = await queryDatabase<InventoryRow>(
-      `
-        SELECT
-          inventory.product_id,
-          inventory.warehouse_id,
-          inventory.slot_id::text,
-          inventory.quality,
-          inventory.qty_on_hand::text,
-          fn_available(
-            inventory.product_id,
-            inventory.warehouse_id,
-            inventory.slot_id,
-            inventory.batch_id,
-            inventory.quality
-          )::text AS available
-        FROM inventory
-        WHERE ($1::text IS NULL OR inventory.product_id = $1)
-          AND ($2::text IS NULL OR inventory.warehouse_id = $2)
-          AND ($3::bigint IS NULL OR inventory.slot_id = $3::bigint)
-        ORDER BY inventory.product_id, inventory.warehouse_id, inventory.slot_id
-      `,
-      [product || null, warehouse || null, slot || null],
-    );
+  @Get('inventory/summary')
+  async inventorySummary(@Query('product') product?: string) {
+    const result = await queryDatabase<InventorySummaryRow>(buildInventorySummaryQuery().text, [product || null]);
+    const row = result.rows[0] ?? { total: '0', available: '0', frozen: '0' };
 
+    return {
+      total: Number(row.total),
+      available: Number(row.available),
+      frozen: Number(row.frozen),
+    };
+  }
+
+  @Get('inventory')
+  async inventory(
+    @Query('product') product?: string,
+    @Query('warehouse') warehouse?: string,
+    @Query('slot') slot?: string,
+    @Query('quality') quality?: string,
+  ) {
+    const result = await queryDatabase<InventoryRow>(buildInventoryQuery().text, [
+      product || null,
+      warehouse || null,
+      slot || null,
+      quality || null,
+    ]);
+
+    return result.rows.map(mapInventoryRow);
+  }
+
+  @Get('products/:id/locations')
+  async productLocations(@Param('id') productId: string) {
+    const result = await queryDatabase<InventoryRow>(buildProductLocationsQuery().text, [productId]);
+    return result.rows.map(mapInventoryRow);
+  }
+
+  @Get('slots/:id/products')
+  async slotProducts(@Param('id') slotId: string) {
+    const result = await queryDatabase<InventoryRow>(buildSlotProductsQuery().text, [slotId]);
+    return result.rows.map(mapInventoryRow);
+  }
+
+  @Get('reports/low-stock')
+  async lowStock() {
+    const result = await queryDatabase<LowStockRow>(buildLowStockQuery().text);
     return result.rows.map((row) => ({
       product_id: row.product_id,
-      warehouse_id: row.warehouse_id,
-      slot_id: row.slot_id ? Number(row.slot_id) : null,
-      quality: row.quality,
+      product_name: row.product_name,
+      safety_stock: Number(row.safety_stock),
       qty_on_hand: Number(row.qty_on_hand),
-      available: Number(row.available),
+      shortage: Number(row.shortage),
     }));
   }
 
@@ -94,4 +137,20 @@ export class StockController {
     );
     return result.rows.map((row) => ({ slot_id: Number(row.slot_id), code: row.code }));
   }
+}
+
+function mapInventoryRow(row: InventoryRow) {
+  return {
+    inventory_id: Number(row.inventory_id),
+    product_id: row.product_id,
+    product_name: row.product_name,
+    warehouse_id: row.warehouse_id,
+    warehouse_name: row.warehouse_name,
+    slot_id: row.slot_id ? Number(row.slot_id) : null,
+    slot_code: row.slot_code,
+    quality: row.quality,
+    qty_on_hand: Number(row.qty_on_hand),
+    available: Number(row.available),
+    frozen: Number(row.frozen),
+  };
 }
