@@ -1,9 +1,9 @@
-import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { AliasBody, ImageBody, ProductBody, ProductsService } from './products.service';
+import { AliasBody, ImageBody, ProductBody, ProductsService, ReplaceBomBody } from './products.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('products')
@@ -13,11 +13,6 @@ export class ProductsController {
   @Get()
   list(@Query('type') type?: string, @Query('active') active?: string) {
     return this.productsService.list({ type, active });
-  }
-
-  @Get(':id')
-  detail(@Param('id') productId: string) {
-    return this.productsService.detail(productId);
   }
 
   @Post()
@@ -52,5 +47,31 @@ export class ProductsController {
   @Roles('ADMIN', 'BOSS')
   addImage(@Param('id') productId: string, @Body() body: ImageBody) {
     return this.productsService.addImage(productId, body);
+  }
+
+  @Get(':id/bom')
+  bom(@Param('id') productId: string) {
+    return this.productsService.bom(productId);
+  }
+
+  @Put(':id/bom')
+  @Roles('ADMIN', 'BOSS')
+  replaceBom(@Param('id') productId: string, @Body() body: ReplaceBomBody) {
+    return this.productsService.replaceBom(productId, body);
+  }
+
+  @Get(':id/where-used')
+  whereUsed(@Param('id') productId: string, @Query('recursive') recursive?: string) {
+    return this.productsService.whereUsed(productId, recursive);
+  }
+
+  @Get(':id/path-aliases')
+  pathAliases(@Param('id') productId: string) {
+    return this.productsService.pathAliases(productId);
+  }
+
+  @Get(':id')
+  detail(@Param('id') productId: string) {
+    return this.productsService.detail(productId);
   }
 }

@@ -1,8 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Empty, Form, Input, InputNumber, List, Modal, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
 import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Boxes, ClipboardList, LogOut, PackageSearch } from 'lucide-react';
 import { CurrentUser, login } from './authApi';
+import {
+  BomLine,
+  BomLineInput,
+  getBom,
+  getPathAliases,
+  getWhereUsed,
+  PathAliasRow,
+  regeneratePathAliases,
+  replaceBom,
+  WhereUsedRow,
+} from './bomApi';
 import {
   getInventoryDashboard,
   getInventorySummary,
@@ -74,6 +85,10 @@ export function App() {
   const [productDraft, setProductDraft] = useState<ProductInput>({ type: 'RM', name: '' });
   const [aliasText, setAliasText] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [bomDraftRows, setBomDraftRows] = useState<BomLineInput[]>([]);
+  const [bomChildProductId, setBomChildProductId] = useState('');
+  const [bomQty, setBomQty] = useState<number | null>(1);
+  const [bomSeq, setBomSeq] = useState<number | null>(1);
 
   const searchQuery = useQuery({
     queryKey: ['search', submittedQuery],
@@ -143,6 +158,30 @@ export function App() {
     queryFn: () => getProduct(token, selectedProductId ?? ''),
     enabled: Boolean(token && selectedProductId),
   });
+
+  const bomQuery = useQuery({
+    queryKey: ['bom', token, selectedProductId],
+    queryFn: () => getBom(token, selectedProductId ?? ''),
+    enabled: Boolean(token && selectedProductId),
+  });
+
+  const pathAliasesQuery = useQuery({
+    queryKey: ['path-aliases', token, selectedProductId],
+    queryFn: () => getPathAliases(token, selectedProductId ?? ''),
+    enabled: Boolean(token && selectedProductId),
+  });
+
+  const whereUsedQuery = useQuery({
+    queryKey: ['where-used', token, selectedProductId],
+    queryFn: () => getWhereUsed(token, selectedProductId ?? '', true),
+    enabled: Boolean(token && selectedProductId),
+  });
+
+  useEffect(() => {
+    if (bomQuery.data) {
+      setBomDraftRows(bomQuery.data.map((line) => ({ child_product_id: line.child_product_id, qty: line.qty, seq: line.seq })));
+    }
+  }, [bomQuery.data]);
 
   const loginMutation = useMutation({
     mutationFn: login,
@@ -280,6 +319,30 @@ export function App() {
       void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
     },
     onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '添加产品图失败' }),
+  });
+
+  const replaceBomMutation = useMutation({
+    mutationFn: () => replaceBom(token, selectedProductId ?? '', bomDraftRows),
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已更新 BOM，生成 ${data.regenerated_aliases} 条路径别名` });
+      void queryClient.invalidateQueries({ queryKey: ['bom'] });
+      void queryClient.invalidateQueries({ queryKey: ['path-aliases'] });
+      void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
+      void queryClient.invalidateQueries({ queryKey: ['where-used'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '更新 BOM 失败' }),
+  });
+
+  const regenerateAliasesMutation = useMutation({
+    mutationFn: () => regeneratePathAliases(token),
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已重算 ${data.regenerated_aliases} 条路径别名` });
+      void queryClient.invalidateQueries({ queryKey: ['path-aliases'] });
+      void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '重算路径别名失败' }),
   });
 
   const fromSlotOptions = useMemo(() => slotOptions(fromSlotsQuery.data), [fromSlotsQuery.data]);
@@ -521,20 +584,29 @@ export function App() {
             canManage={canManageProducts}
             products={productsQuery.data ?? []}
             detail={productDetailQuery.data}
+            bomRows={bomQuery.data ?? []}
+            pathAliasRows={pathAliasesQuery.data ?? productDetailQuery.data?.path_aliases ?? []}
+            whereUsedRows={whereUsedQuery.data ?? []}
             selectedProductId={selectedProductId}
             productTypeFilter={productTypeFilter}
             productActiveFilter={productActiveFilter}
             productDraft={productDraft}
             aliasText={aliasText}
             imageUrl={imageUrl}
-            loading={productsQuery.isFetching || productDetailQuery.isFetching}
+            bomDraftRows={bomDraftRows}
+            bomChildProductId={bomChildProductId}
+            bomQty={bomQty}
+            bomSeq={bomSeq}
+            loading={productsQuery.isFetching || productDetailQuery.isFetching || bomQuery.isFetching}
             saving={
               createProductMutation.isPending ||
               updateProductMutation.isPending ||
               softDeleteProductMutation.isPending ||
               addAliasMutation.isPending ||
               deleteAliasMutation.isPending ||
-              addImageMutation.isPending
+              addImageMutation.isPending ||
+              replaceBomMutation.isPending ||
+              regenerateAliasesMutation.isPending
             }
             onTypeFilterChange={setProductTypeFilter}
             onActiveFilterChange={setProductActiveFilter}
@@ -545,6 +617,10 @@ export function App() {
             onDraftChange={setProductDraft}
             onAliasTextChange={setAliasText}
             onImageUrlChange={setImageUrl}
+            onBomDraftRowsChange={setBomDraftRows}
+            onBomChildProductIdChange={setBomChildProductId}
+            onBomQtyChange={setBomQty}
+            onBomSeqChange={setBomSeq}
             onCreate={() => createProductMutation.mutate()}
             onUpdate={() => updateProductMutation.mutate()}
             onSoftDelete={(productId) =>
@@ -559,6 +635,31 @@ export function App() {
             onAddAlias={() => addAliasMutation.mutate()}
             onDeleteAlias={(aliasId) => deleteAliasMutation.mutate(aliasId)}
             onAddImage={() => addImageMutation.mutate()}
+            onAddBomDraftRow={() => {
+              if (!bomChildProductId.trim() || !bomQty || !bomSeq) {
+                setNotice({ type: 'error', message: '请填写 BOM 子项、用量和顺序' });
+                return;
+              }
+              setBomDraftRows((rows) =>
+                [...rows, { child_product_id: bomChildProductId.trim().toUpperCase(), qty: bomQty, seq: bomSeq }].sort(
+                  (left, right) => left.seq - right.seq,
+                ),
+              );
+              setBomChildProductId('');
+              setBomQty(1);
+              setBomSeq((bomSeq ?? 0) + 1);
+            }}
+            onRemoveBomDraftRow={(index) => setBomDraftRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}
+            onReplaceBom={() =>
+              Modal.confirm({
+                title: '确认替换 BOM？',
+                content: '保存后会替换当前产品的全部 BOM 明细，并立即重算路径别名。',
+                okText: '保存 BOM',
+                cancelText: '取消',
+                onOk: () => replaceBomMutation.mutate(),
+              })
+            }
+            onRegenerateAliases={() => regenerateAliasesMutation.mutate()}
           />
         )}
       </Card>
@@ -743,12 +844,19 @@ interface ProductManagementProps {
   canManage: boolean;
   products: ProductSummary[];
   detail: ProductDetail | undefined;
+  bomRows: BomLine[];
+  pathAliasRows: PathAliasRow[];
+  whereUsedRows: WhereUsedRow[];
   selectedProductId: string | null;
   productTypeFilter: ProductType | undefined;
   productActiveFilter: boolean | undefined;
   productDraft: ProductInput;
   aliasText: string;
   imageUrl: string;
+  bomDraftRows: BomLineInput[];
+  bomChildProductId: string;
+  bomQty: number | null;
+  bomSeq: number | null;
   loading: boolean;
   saving: boolean;
   onTypeFilterChange: (value: ProductType | undefined) => void;
@@ -757,24 +865,39 @@ interface ProductManagementProps {
   onDraftChange: (value: ProductInput) => void;
   onAliasTextChange: (value: string) => void;
   onImageUrlChange: (value: string) => void;
+  onBomDraftRowsChange: (value: BomLineInput[]) => void;
+  onBomChildProductIdChange: (value: string) => void;
+  onBomQtyChange: (value: number | null) => void;
+  onBomSeqChange: (value: number | null) => void;
   onCreate: () => void;
   onUpdate: () => void;
   onSoftDelete: (productId: string) => void;
   onAddAlias: () => void;
   onDeleteAlias: (aliasId: number) => void;
   onAddImage: () => void;
+  onAddBomDraftRow: () => void;
+  onRemoveBomDraftRow: (index: number) => void;
+  onReplaceBom: () => void;
+  onRegenerateAliases: () => void;
 }
 
 function ProductManagement({
   canManage,
   products,
   detail,
+  bomRows,
+  pathAliasRows,
+  whereUsedRows,
   selectedProductId,
   productTypeFilter,
   productActiveFilter,
   productDraft,
   aliasText,
   imageUrl,
+  bomDraftRows,
+  bomChildProductId,
+  bomQty,
+  bomSeq,
   loading,
   saving,
   onTypeFilterChange,
@@ -783,12 +906,20 @@ function ProductManagement({
   onDraftChange,
   onAliasTextChange,
   onImageUrlChange,
+  onBomDraftRowsChange,
+  onBomChildProductIdChange,
+  onBomQtyChange,
+  onBomSeqChange,
   onCreate,
   onUpdate,
   onSoftDelete,
   onAddAlias,
   onDeleteAlias,
   onAddImage,
+  onAddBomDraftRow,
+  onRemoveBomDraftRow,
+  onReplaceBom,
+  onRegenerateAliases,
 }: ProductManagementProps) {
   const productTypeOptions = [
     { value: 'RM', label: 'RM 原材料' },
@@ -989,13 +1120,113 @@ function ProductManagement({
             <List
               className="warning-list"
               header="路径别名"
-              dataSource={detail.path_aliases}
+              dataSource={pathAliasRows}
               locale={{ emptyText: '暂无路径别名' }}
               renderItem={(item) => <List.Item>{item.path_text}</List.Item>}
             />
           </>
         ) : (
           <Empty description="选择一个产品后查看详情" />
+        )}
+      </section>
+
+      <section className="operation-panel">
+        <Title level={4}>BOM 管理</Title>
+        {detail ? (
+          <>
+            <Text strong>{detail.product_id} / {detail.name}</Text>
+            <Table
+              size="small"
+              className="inventory-table"
+              dataSource={bomRows}
+              rowKey="bom_line_id"
+              pagination={false}
+              locale={{ emptyText: '暂无 BOM 明细' }}
+              columns={[
+                { title: '顺序', dataIndex: 'seq' },
+                { title: '子项', dataIndex: 'child_product_id' },
+                { title: '名称', dataIndex: 'child_name' },
+                { title: '类型', dataIndex: 'child_type' },
+                { title: '用量', dataIndex: 'qty' },
+              ]}
+            />
+
+            <Title level={5}>编辑明细</Title>
+            <div className="form-grid">
+              <label>
+                子项产品 ID
+                <Input
+                  disabled={!canManage}
+                  value={bomChildProductId}
+                  placeholder="例如 RM-0123"
+                  onChange={(event) => onBomChildProductIdChange(event.target.value)}
+                />
+              </label>
+              <label>
+                用量
+                <InputNumber disabled={!canManage} min={0.0001} value={bomQty} onChange={onBomQtyChange} className="full-input" />
+              </label>
+              <label>
+                顺序
+                <InputNumber disabled={!canManage} min={1} precision={0} value={bomSeq} onChange={onBomSeqChange} className="full-input" />
+              </label>
+            </div>
+            <Space className="action-row" wrap>
+              <Button disabled={!canManage} loading={saving} onClick={onAddBomDraftRow}>
+                添加到草稿
+              </Button>
+              <Button disabled={!canManage || !selectedProductId} type="primary" loading={saving} onClick={onReplaceBom}>
+                保存 BOM 并重算别名
+              </Button>
+              <Button disabled={!canManage} loading={saving} onClick={onRegenerateAliases}>
+                重算路径别名
+              </Button>
+              <Button disabled={!canManage} onClick={() => onBomDraftRowsChange([])}>
+                清空草稿
+              </Button>
+            </Space>
+
+            <List
+              className="warning-list"
+              header="BOM 草稿"
+              dataSource={bomDraftRows}
+              locale={{ emptyText: '草稿为空；保存空草稿会清空该产品 BOM' }}
+              renderItem={(item, index) => (
+                <List.Item
+                  actions={[
+                    <Button key="delete" size="small" danger disabled={!canManage} onClick={() => onRemoveBomDraftRow(index)}>
+                      删除
+                    </Button>,
+                  ]}
+                >
+                  <Space wrap>
+                    <Tag>{item.seq}</Tag>
+                    <Text strong>{item.child_product_id}</Text>
+                    <Text>用量 {item.qty}</Text>
+                  </Space>
+                </List.Item>
+              )}
+            />
+
+            <List
+              className="warning-list"
+              header="Where-used"
+              dataSource={whereUsedRows}
+              locale={{ emptyText: '暂无父项引用' }}
+              renderItem={(item) => (
+                <List.Item>
+                  <Space wrap>
+                    <Tag>{item.lvl} 层</Tag>
+                    <Text strong>{item.parent_product_id}</Text>
+                    <Text>{item.parent_name}</Text>
+                    <Tag>{item.ptype}</Tag>
+                  </Space>
+                </List.Item>
+              )}
+            />
+          </>
+        ) : (
+          <Empty description="选择一个产品后管理 BOM" />
         )}
       </section>
     </>

@@ -1,5 +1,13 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { queryDatabase } from '../database';
+import { pool, queryDatabase } from '../database';
+import {
+  buildBomQuery,
+  buildDeleteBomLinesQuery,
+  buildInsertBomLineQuery,
+  buildPathAliasesQuery,
+  buildRegeneratePathAliasesQuery,
+  buildWhereUsedQuery,
+} from './bom-queries';
 import {
   buildAddAliasQuery,
   buildAddImageQuery,
@@ -32,6 +40,16 @@ export interface AliasBody {
 export interface ImageBody {
   url?: string;
   seq?: number | string;
+}
+
+export interface BomLineBody {
+  child_product_id?: string;
+  qty?: number | string;
+  seq?: number | string;
+}
+
+export interface ReplaceBomBody {
+  lines?: BomLineBody[];
 }
 
 interface ProductRow {
@@ -69,6 +87,27 @@ interface PathAliasRow {
   root_product_id: string;
   path_text: string;
   generated_at: string;
+}
+
+interface BomLineRow {
+  bom_line_id: string;
+  parent_product_id: string;
+  child_product_id: string;
+  child_name: string;
+  child_type: ProductType;
+  qty: string;
+  seq: number;
+}
+
+interface RegenRow {
+  regenerated_aliases: number;
+}
+
+interface WhereUsedRow {
+  parent_product_id: string;
+  parent_name: string;
+  ptype: ProductType;
+  lvl: number;
 }
 
 interface IdRow {
@@ -216,6 +255,72 @@ export class ProductsService {
       mapProductError(error);
     }
   }
+
+  async bom(productId: string) {
+    await this.ensureProductExists(productId);
+    const result = await queryDatabase<BomLineRow>(buildBomQuery().text, [productId]);
+    return result.rows.map(mapBomLineRow);
+  }
+
+  async replaceBom(productId: string, body: ReplaceBomBody) {
+    await this.ensureProductExists(productId);
+    const lines = normalizeBomLines(body.lines);
+
+    if (!pool) {
+      throw new Error('DATABASE_URL is not set');
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(buildDeleteBomLinesQuery().text, [productId]);
+
+      for (const line of lines) {
+        await client.query(buildInsertBomLineQuery().text, [productId, line.child_product_id, line.qty, line.seq]);
+      }
+
+      const result = await client.query<RegenRow>(buildRegeneratePathAliasesQuery().text);
+      await client.query('COMMIT');
+      return {
+        line_count: lines.length,
+        regenerated_aliases: Number(result.rows[0].regenerated_aliases),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      mapProductError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  async regeneratePathAliases() {
+    const result = await queryDatabase<RegenRow>(buildRegeneratePathAliasesQuery().text);
+    return { regenerated_aliases: Number(result.rows[0].regenerated_aliases) };
+  }
+
+  async whereUsed(productId: string, recursive: string | undefined) {
+    await this.ensureProductExists(productId);
+    const result = await queryDatabase<WhereUsedRow>(buildWhereUsedQuery().text, [
+      productId,
+      parseOptionalBoolean(recursive) ?? false,
+    ]);
+    return result.rows.map((row) => ({
+      parent_product_id: row.parent_product_id,
+      parent_name: row.parent_name,
+      ptype: row.ptype,
+      lvl: Number(row.lvl),
+    }));
+  }
+
+  async pathAliases(productId: string) {
+    await this.ensureProductExists(productId);
+    const result = await queryDatabase<PathAliasRow>(buildPathAliasesQuery().text, [productId]);
+    return result.rows.map(mapPathAliasRow);
+  }
+
+  private async ensureProductExists(productId: string) {
+    await this.detail(productId);
+  }
 }
 
 function mapProductRow(row: ProductRow) {
@@ -253,6 +358,28 @@ function mapImageRow(row: ImageRow) {
   };
 }
 
+function mapPathAliasRow(row: PathAliasRow) {
+  return {
+    path_alias_id: Number(row.path_alias_id),
+    product_id: row.product_id,
+    root_product_id: row.root_product_id,
+    path_text: row.path_text,
+    generated_at: row.generated_at,
+  };
+}
+
+function mapBomLineRow(row: BomLineRow) {
+  return {
+    bom_line_id: Number(row.bom_line_id),
+    parent_product_id: row.parent_product_id,
+    child_product_id: row.child_product_id,
+    child_name: row.child_name,
+    child_type: row.child_type,
+    qty: Number(row.qty),
+    seq: Number(row.seq),
+  };
+}
+
 async function countRows(text: string, values: unknown[]) {
   const result = await queryDatabase<CountRow>(text, values);
   return Number(result.rows[0]?.count ?? 0);
@@ -286,6 +413,34 @@ function requireText(value: unknown, message: string) {
   return value.trim();
 }
 
+function normalizeBomLines(lines: BomLineBody[] | undefined) {
+  if (!Array.isArray(lines)) {
+    throw new BadRequestException('BOM 明细必须是数组');
+  }
+
+  return lines.map((line) => ({
+    child_product_id: requireText(line.child_product_id, '子项产品不能为空').toUpperCase(),
+    qty: requirePositiveNumber(line.qty, 'BOM 用量必须大于 0'),
+    seq: requirePositiveInteger(line.seq, 'BOM 顺序必须是正整数'),
+  }));
+}
+
+function requirePositiveNumber(value: unknown, message: string) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue) || numberValue <= 0) {
+    throw new BadRequestException(message);
+  }
+  return numberValue;
+}
+
+function requirePositiveInteger(value: unknown, message: string) {
+  const numberValue = Number(value);
+  if (!Number.isInteger(numberValue) || numberValue <= 0) {
+    throw new BadRequestException(message);
+  }
+  return numberValue;
+}
+
 function normalizeProductId(value: unknown) {
   if (typeof value !== 'string' || !value.trim()) {
     return null;
@@ -307,10 +462,10 @@ function generateProductId(type: ProductType) {
 function mapProductError(error: unknown): never {
   const pgError = error as { code?: string; message?: string };
   if (pgError.code === '23505') {
-    throw new ConflictException('产品编码、别名或图片序号重复');
+    throw new ConflictException('产品编码、别名、图片序号或 BOM 顺序重复');
   }
   if (pgError.code === '23503') {
-    throw new ConflictException('产品已被库存、流水、BOM 或其他业务数据引用，无法直接改编码');
+    throw new ConflictException('产品或 BOM 子项不存在，或产品已被业务数据引用，无法完成操作');
   }
   if (pgError.code === '23514' || pgError.code === '22P02') {
     throw new BadRequestException(pgError.message ?? '产品数据不合法');
