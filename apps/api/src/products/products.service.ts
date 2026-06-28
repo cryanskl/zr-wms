@@ -17,7 +17,9 @@ import {
   buildDeleteAliasQuery,
   buildProductDetailQuery,
   buildProductListQuery,
+  buildProductPriceQuery,
   buildSoftDeleteProductQuery,
+  buildUpsertProductPriceQuery,
   buildUpdateProductQuery,
 } from './product-queries';
 
@@ -52,6 +54,13 @@ export interface BomLineBody {
 
 export interface ReplaceBomBody {
   lines?: BomLineBody[];
+}
+
+export interface PriceBody {
+  cost_in?: number | string | null;
+  cost_process?: number | string | null;
+  cost_loss?: number | string | null;
+  price_out?: number | string | null;
 }
 
 interface ProductRow {
@@ -121,6 +130,16 @@ interface MaxProducibleRow {
 
 interface MaxProducibleDeepRow extends MaxProducibleRow {
   limiting_demand: string | null;
+}
+
+interface PriceRow {
+  product_id: string;
+  cost_in: string | null;
+  cost_process: string | null;
+  cost_loss: string | null;
+  price_out: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
 }
 
 interface IdRow {
@@ -331,6 +350,28 @@ export class ProductsService {
     return result.rows.map(mapPathAliasRow);
   }
 
+  async price(productId: string) {
+    const result = await queryDatabase<PriceRow>(buildProductPriceQuery().text, [productId]);
+    const row = result.rows[0];
+    if (!row) {
+      throw new NotFoundException('产品不存在');
+    }
+    return mapPriceRow(row);
+  }
+
+  async updatePrice(productId: string, body: PriceBody, operatorId: number) {
+    await this.ensureProductExists(productId);
+    const result = await queryDatabase<PriceRow>(buildUpsertProductPriceQuery().text, [
+      productId,
+      nullableNumber(body.cost_in),
+      nullableNumber(body.cost_process),
+      nullableNumber(body.cost_loss),
+      nullableNumber(body.price_out),
+      operatorId,
+    ]);
+    return mapPriceRow(result.rows[0]);
+  }
+
   async producible(productId: string, deep: string | undefined, useSfStock: string | undefined) {
     try {
       if (deep === 'true') {
@@ -423,6 +464,18 @@ function mapBomLineRow(row: BomLineRow) {
     child_type: row.child_type,
     qty: Number(row.qty),
     seq: Number(row.seq),
+  };
+}
+
+function mapPriceRow(row: PriceRow) {
+  return {
+    product_id: row.product_id,
+    cost_in: row.cost_in === null ? null : Number(row.cost_in),
+    cost_process: row.cost_process === null ? null : Number(row.cost_process),
+    cost_loss: row.cost_loss === null ? null : Number(row.cost_loss),
+    price_out: row.price_out === null ? null : Number(row.price_out),
+    updated_by: row.updated_by === null ? null : Number(row.updated_by),
+    updated_at: row.updated_at,
   };
 }
 

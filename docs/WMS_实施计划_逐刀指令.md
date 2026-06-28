@@ -236,7 +236,7 @@ B. 初始数据导入（✅ 已完成）：
 - POST /import/products  → 产品批量导入。需 ADMIN
 - POST /import/bom       → BOM 批量导入，导入后调 fn_regen_path_aliases()。需 ADMIN
 
-C. 价格：
+C. 价格（✅ 已完成）：
 - GET /products/{id}/price → 查看价格（入货/加工/损耗/出货）。需 ADMIN
 - PUT /products/{id}/price → 改价格。仅 BOSS
 

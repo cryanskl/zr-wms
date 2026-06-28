@@ -53,6 +53,23 @@ export interface ProductDetail extends ProductSummary {
   path_aliases: ProductPathAlias[];
 }
 
+export interface ProductPrice {
+  product_id: string;
+  cost_in: number | null;
+  cost_process: number | null;
+  cost_loss: number | null;
+  price_out: number | null;
+  updated_by: number | null;
+  updated_at: string | null;
+}
+
+export interface ProductPriceInput {
+  cost_in?: number | null;
+  cost_process?: number | null;
+  cost_loss?: number | null;
+  price_out?: number | null;
+}
+
 export function buildProductsUrl(filters: ProductFilters = {}) {
   const params = new URLSearchParams();
   if (filters.type) params.set('type', filters.type);
@@ -72,12 +89,27 @@ export function buildCreateProductRequest(input: ProductInput) {
   };
 }
 
+export function buildProductPriceUrl(productId: string) {
+  return `/api/v1/products/${encodeURIComponent(productId)}/price`;
+}
+
+export function buildUpdateProductPriceRequest(input: ProductPriceInput) {
+  return {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  };
+}
+
 export function listProducts(token: string, filters: ProductFilters = {}) {
   return apiFetch<ProductSummary[]>(buildProductsUrl(filters), token);
 }
 
 export function getProduct(token: string, productId: string) {
   return apiFetch<ProductDetail>(`/api/v1/products/${encodeURIComponent(productId)}`, token);
+}
+
+export function getProductPrice(token: string, productId: string) {
+  return apiFetch<ProductPrice>(buildProductPriceUrl(productId), token);
 }
 
 export function createProduct(token: string, input: ProductInput) {
@@ -118,6 +150,10 @@ export function addProductImage(token: string, productId: string, url: string, s
     method: 'POST',
     body: JSON.stringify({ url, seq }),
   });
+}
+
+export function updateProductPrice(token: string, productId: string, input: ProductPriceInput) {
+  return apiFetch<ProductPrice>(buildProductPriceUrl(productId), token, buildUpdateProductPriceRequest(input));
 }
 
 async function apiFetch<T>(url: string, token: string, init: RequestInit = {}): Promise<T> {

@@ -169,3 +169,59 @@ export function buildAddImageQuery(): SqlQuery {
     `,
   };
 }
+
+export function buildProductPriceQuery(): SqlQuery {
+  return {
+    text: `
+      SELECT
+        product.product_id,
+        price.cost_in::text,
+        price.cost_process::text,
+        price.cost_loss::text,
+        price.price_out::text,
+        price.updated_by::text,
+        price.updated_at::text
+      FROM product
+      LEFT JOIN price ON price.product_id = product.product_id
+      WHERE product.product_id = $1::text
+    `,
+  };
+}
+
+export function buildUpsertProductPriceQuery(): SqlQuery {
+  return {
+    text: `
+      INSERT INTO price (
+        product_id,
+        cost_in,
+        cost_process,
+        cost_loss,
+        price_out,
+        updated_by
+      )
+      VALUES (
+        $1::text,
+        $2::numeric,
+        $3::numeric,
+        $4::numeric,
+        $5::numeric,
+        $6::bigint
+      )
+      ON CONFLICT (product_id) DO UPDATE
+      SET
+        cost_in = EXCLUDED.cost_in,
+        cost_process = EXCLUDED.cost_process,
+        cost_loss = EXCLUDED.cost_loss,
+        price_out = EXCLUDED.price_out,
+        updated_by = EXCLUDED.updated_by
+      RETURNING
+        product_id,
+        cost_in::text,
+        cost_process::text,
+        cost_loss::text,
+        price_out::text,
+        updated_by::text,
+        updated_at::text
+    `,
+  };
+}

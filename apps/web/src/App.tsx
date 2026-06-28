@@ -45,13 +45,17 @@ import {
   createProduct,
   deleteProductAlias,
   getProduct,
+  getProductPrice,
   listProducts,
   ProductDetail,
   ProductInput,
+  ProductPrice,
+  ProductPriceInput,
   ProductSummary,
   ProductType,
   softDeleteProduct,
   updateProduct,
+  updateProductPrice,
 } from './productApi';
 import {
   getInventory,
@@ -156,6 +160,7 @@ export function App() {
   const [productActiveFilter, setProductActiveFilter] = useState<boolean | undefined>(true);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [productDraft, setProductDraft] = useState<ProductInput>({ type: 'RM', name: '' });
+  const [priceDraft, setPriceDraft] = useState<ProductPriceInput>({});
   const [aliasText, setAliasText] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [bomDraftRows, setBomDraftRows] = useState<BomLineInput[]>([]);
@@ -219,6 +224,9 @@ export function App() {
   const results = searchQuery.data ?? [];
   const token = auth?.accessToken ?? '';
   const isAdmin = auth?.user.role === 'ADMIN';
+  const canManageProducts = auth?.user.role === 'ADMIN' || auth?.user.role === 'BOSS';
+  const canViewPrice = canManageProducts;
+  const canEditPrice = auth?.user.role === 'BOSS';
 
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', token],
@@ -295,6 +303,12 @@ export function App() {
     queryKey: ['product-detail', token, selectedProductId],
     queryFn: () => getProduct(token, selectedProductId ?? ''),
     enabled: Boolean(token && selectedProductId),
+  });
+
+  const productPriceQuery = useQuery({
+    queryKey: ['product-price', token, selectedProductId],
+    queryFn: () => getProductPrice(token, selectedProductId ?? ''),
+    enabled: Boolean(token && selectedProductId && canViewPrice),
   });
 
   const bomQuery = useQuery({
@@ -374,6 +388,19 @@ export function App() {
       setBomDraftRows(bomQuery.data.map((line) => ({ child_product_id: line.child_product_id, qty: line.qty, seq: line.seq })));
     }
   }, [bomQuery.data]);
+
+  useEffect(() => {
+    if (productPriceQuery.data) {
+      setPriceDraft({
+        cost_in: productPriceQuery.data.cost_in,
+        cost_process: productPriceQuery.data.cost_process,
+        cost_loss: productPriceQuery.data.cost_loss,
+        price_out: productPriceQuery.data.price_out,
+      });
+    } else if (!selectedProductId) {
+      setPriceDraft({});
+    }
+  }, [productPriceQuery.data, selectedProductId]);
 
   useEffect(() => {
     if (orderDetailQuery.data) {
@@ -502,7 +529,6 @@ export function App() {
     value: item.warehouse_id,
     label: `${item.warehouse_id} ${item.name}`,
   }));
-  const canManageProducts = auth?.user.role === 'ADMIN' || auth?.user.role === 'BOSS';
 
   useEffect(() => {
     if (activeView === 'imports' && !canManageProducts) {
@@ -530,6 +556,15 @@ export function App() {
       void queryClient.invalidateQueries({ queryKey: ['product-detail'] });
     },
     onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '更新产品失败' }),
+  });
+
+  const updatePriceMutation = useMutation({
+    mutationFn: () => updateProductPrice(token, selectedProductId ?? '', priceDraft),
+    onSuccess: (price) => {
+      setNotice({ type: 'success', message: `已更新价格：${price.product_id}` });
+      void queryClient.invalidateQueries({ queryKey: ['product-price'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '更新价格失败' }),
   });
 
   const softDeleteProductMutation = useMutation({
@@ -1205,8 +1240,12 @@ export function App() {
         ) : activeView === 'products' ? (
           <ProductManagement
             canManage={canManageProducts}
+            canViewPrice={canViewPrice}
+            canEditPrice={canEditPrice}
             products={productsQuery.data ?? []}
             detail={productDetailQuery.data}
+            price={productPriceQuery.data}
+            priceDraft={priceDraft}
             bomRows={bomQuery.data ?? []}
             pathAliasRows={pathAliasesQuery.data ?? productDetailQuery.data?.path_aliases ?? []}
             whereUsedRows={whereUsedQuery.data ?? []}
@@ -1222,10 +1261,11 @@ export function App() {
             bomChildProductId={bomChildProductId}
             bomQty={bomQty}
             bomSeq={bomSeq}
-            loading={productsQuery.isFetching || productDetailQuery.isFetching || bomQuery.isFetching}
+            loading={productsQuery.isFetching || productDetailQuery.isFetching || productPriceQuery.isFetching || bomQuery.isFetching}
             saving={
               createProductMutation.isPending ||
               updateProductMutation.isPending ||
+              updatePriceMutation.isPending ||
               softDeleteProductMutation.isPending ||
               addAliasMutation.isPending ||
               deleteAliasMutation.isPending ||
@@ -1239,10 +1279,12 @@ export function App() {
             onSelectProduct={(product) => {
               setSelectedProductId(product.product_id);
               setProductDraft(productToInput(product));
+              setPriceDraft({});
               setProducibleResult(null);
               setProducibleMode('');
             }}
             onDraftChange={setProductDraft}
+            onPriceDraftChange={setPriceDraft}
             onAliasTextChange={setAliasText}
             onImageUrlChange={setImageUrl}
             onBomDraftRowsChange={setBomDraftRows}
@@ -1251,6 +1293,7 @@ export function App() {
             onBomSeqChange={setBomSeq}
             onCreate={() => createProductMutation.mutate()}
             onUpdate={() => updateProductMutation.mutate()}
+            onUpdatePrice={() => updatePriceMutation.mutate()}
             onSoftDelete={(productId) =>
               Modal.confirm({
                 title: '确认停用产品？',
@@ -2418,8 +2461,12 @@ function importTypeLabel(type: ImportType) {
 
 interface ProductManagementProps {
   canManage: boolean;
+  canViewPrice: boolean;
+  canEditPrice: boolean;
   products: ProductSummary[];
   detail: ProductDetail | undefined;
+  price: ProductPrice | undefined;
+  priceDraft: ProductPriceInput;
   bomRows: BomLine[];
   pathAliasRows: PathAliasRow[];
   whereUsedRows: WhereUsedRow[];
@@ -2441,6 +2488,7 @@ interface ProductManagementProps {
   onActiveFilterChange: (value: boolean | undefined) => void;
   onSelectProduct: (product: ProductSummary) => void;
   onDraftChange: (value: ProductInput) => void;
+  onPriceDraftChange: (value: ProductPriceInput) => void;
   onAliasTextChange: (value: string) => void;
   onImageUrlChange: (value: string) => void;
   onBomDraftRowsChange: (value: BomLineInput[]) => void;
@@ -2449,6 +2497,7 @@ interface ProductManagementProps {
   onBomSeqChange: (value: number | null) => void;
   onCreate: () => void;
   onUpdate: () => void;
+  onUpdatePrice: () => void;
   onSoftDelete: (productId: string) => void;
   onAddAlias: () => void;
   onDeleteAlias: (aliasId: number) => void;
@@ -2462,8 +2511,12 @@ interface ProductManagementProps {
 
 function ProductManagement({
   canManage,
+  canViewPrice,
+  canEditPrice,
   products,
   detail,
+  price,
+  priceDraft,
   bomRows,
   pathAliasRows,
   whereUsedRows,
@@ -2485,6 +2538,7 @@ function ProductManagement({
   onActiveFilterChange,
   onSelectProduct,
   onDraftChange,
+  onPriceDraftChange,
   onAliasTextChange,
   onImageUrlChange,
   onBomDraftRowsChange,
@@ -2493,6 +2547,7 @@ function ProductManagement({
   onBomSeqChange,
   onCreate,
   onUpdate,
+  onUpdatePrice,
   onSoftDelete,
   onAddAlias,
   onDeleteAlias,
@@ -2711,6 +2766,72 @@ function ProductManagement({
           <Empty description="选择一个产品后查看详情" />
         )}
       </section>
+
+      {canViewPrice && (
+        <section className="operation-panel">
+          <Title level={4}>价格</Title>
+          {detail ? (
+            <>
+              {!canEditPrice && <Alert className="form-alert" type="info" showIcon message="当前角色可查看价格，只有老板可修改。" />}
+              <Text strong>
+                {detail.product_id} / {detail.name}
+              </Text>
+              <div className="form-grid">
+                <label>
+                  入货成本
+                  <InputNumber
+                    disabled={!canEditPrice}
+                    className="full-input"
+                    min={0}
+                    value={priceDraft.cost_in ?? null}
+                    onChange={(value) => onPriceDraftChange({ ...priceDraft, cost_in: value })}
+                  />
+                </label>
+                <label>
+                  加工成本
+                  <InputNumber
+                    disabled={!canEditPrice}
+                    className="full-input"
+                    min={0}
+                    value={priceDraft.cost_process ?? null}
+                    onChange={(value) => onPriceDraftChange({ ...priceDraft, cost_process: value })}
+                  />
+                </label>
+                <label>
+                  损耗成本
+                  <InputNumber
+                    disabled={!canEditPrice}
+                    className="full-input"
+                    min={0}
+                    value={priceDraft.cost_loss ?? null}
+                    onChange={(value) => onPriceDraftChange({ ...priceDraft, cost_loss: value })}
+                  />
+                </label>
+                <label>
+                  出货价格
+                  <InputNumber
+                    disabled={!canEditPrice}
+                    className="full-input"
+                    min={0}
+                    value={priceDraft.price_out ?? null}
+                    onChange={(value) => onPriceDraftChange({ ...priceDraft, price_out: value })}
+                  />
+                </label>
+              </div>
+              <Space className="action-row" wrap>
+                <Button disabled={!canEditPrice || !selectedProductId} type="primary" loading={saving} onClick={onUpdatePrice}>
+                  保存价格
+                </Button>
+                <Text type="secondary">
+                  最近更新：{price?.updated_at ?? '无'} {price?.updated_by ? `/ 用户 ${price.updated_by}` : ''}
+                </Text>
+              </Space>
+            </>
+          ) : (
+            <Empty description="选择一个产品后查看价格" />
+          )}
+        </section>
+      )}
 
       <section className="operation-panel">
         <Title level={4}>BOM 管理</Title>

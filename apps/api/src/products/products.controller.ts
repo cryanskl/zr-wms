@@ -3,7 +3,7 @@ import { CurrentUser } from '../auth/current-user';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { AliasBody, ImageBody, ProductBody, ProductsService, ReplaceBomBody } from './products.service';
+import { AliasBody, ImageBody, PriceBody, ProductBody, ProductsService, ReplaceBomBody } from './products.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('products')
@@ -73,6 +73,18 @@ export class ProductsController {
   @Get(':id/producible')
   producible(@Param('id') productId: string, @Query('deep') deep?: string, @Query('useSfStock') useSfStock?: string) {
     return this.productsService.producible(productId, deep, useSfStock);
+  }
+
+  @Get(':id/price')
+  @Roles('ADMIN', 'BOSS')
+  price(@Param('id') productId: string) {
+    return this.productsService.price(productId);
+  }
+
+  @Put(':id/price')
+  @Roles('BOSS')
+  updatePrice(@Param('id') productId: string, @Body() body: PriceBody, @Req() request: { user: CurrentUser }) {
+    return this.productsService.updatePrice(productId, body, request.user.userId);
   }
 
   @Get(':id')
