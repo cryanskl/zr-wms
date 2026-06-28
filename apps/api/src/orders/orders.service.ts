@@ -5,6 +5,10 @@ import {
   buildInsertOrderLineQuery,
   buildOrderDetailQuery,
   buildOrderListQuery,
+  buildOrderMrpQuery,
+  buildReceiveInboundQuery,
+  buildReceiveOrderLineQuery,
+  buildUpdateReceivedOrderLineQuery,
   buildUpdateOrderHeaderQuery,
 } from './order-queries';
 
@@ -45,6 +49,18 @@ export interface PatchOrderBody {
   status?: string;
 }
 
+export interface ReceiveOrderBody {
+  order_line_id?: number | string;
+  product_id?: string;
+  warehouse_id?: string;
+  slot_id?: number | string | null;
+  qty?: number | string;
+  batch_id?: number | string | null;
+  quality?: string;
+  type?: string;
+  reason?: string | null;
+}
+
 interface OrderRow {
   order_id: string;
   order_type: OrderType;
@@ -69,6 +85,38 @@ interface OrderLineRow {
   qty: string;
   qty_done: string;
   line_status: OrderLineStatus;
+}
+
+interface ReceiveOrderLineRow {
+  order_line_id: string;
+  order_id: string;
+  order_type: OrderType;
+  product_id: string;
+  qty: string;
+  qty_done: string;
+  line_status: OrderLineStatus;
+}
+
+interface ReceivedOrderLineRow {
+  order_line_id: string;
+  order_id: string;
+  product_id: string;
+  qty: string;
+  qty_done: string;
+  line_status: OrderLineStatus;
+}
+
+interface MovementRow {
+  movement_id: string;
+}
+
+interface OrderMrpRow {
+  product_id: string;
+  ptype: string;
+  lvl: string;
+  gross_demand: string;
+  on_hand: string;
+  net_required: string;
 }
 
 @Injectable()
@@ -154,6 +202,109 @@ export class OrdersService {
     } catch (error) {
       mapOrderError(error);
     }
+  }
+
+  async receive(orderId: string, body: ReceiveOrderBody, operatorId: number) {
+    const normalizedOrderId = requireOrderId(orderId);
+    const orderLineId = requireOrderId(body.order_line_id);
+    const productId = requireText(body.product_id, '到货产品不能为空').toUpperCase();
+    const warehouseId = requireText(body.warehouse_id, '到货仓库不能为空').toUpperCase();
+    const slotId = requireBigint(body.slot_id, '到货库位不能为空');
+    const qty = requirePositiveNumber(body.qty, '到货数量必须大于 0');
+    const batchId = nullableBigint(body.batch_id);
+    const quality = optionalText(body.quality, 'GOOD');
+    const movementType = optionalText(body.type, 'IN');
+    const reason = nullableText(body.reason) ?? '采购到货';
+
+    if (!pool) {
+      throw new Error('DATABASE_URL is not set');
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const lineResult = await client.query<ReceiveOrderLineRow>(buildReceiveOrderLineQuery().text, [
+        normalizedOrderId,
+        orderLineId,
+      ]);
+      const line = lineResult.rows[0];
+
+      if (!line) {
+        throw new NotFoundException('订单明细不存在');
+      }
+      if (line.order_type !== 'PURCHASE') {
+        throw new BadRequestException('只有采购单可以到货入库');
+      }
+      if (line.product_id !== productId) {
+        throw new BadRequestException('到货产品必须匹配订单明细');
+      }
+      if (line.line_status === 'CANCELLED') {
+        throw new ConflictException('已取消的采购明细不能到货');
+      }
+
+      const orderedQty = Number(line.qty);
+      const doneQty = Number(line.qty_done);
+      const nextDoneQty = doneQty + qty;
+      if (nextDoneQty - orderedQty > 0.000001) {
+        throw new ConflictException('到货数量超过订单剩余数量');
+      }
+
+      const inboundResult = await client.query<MovementRow>(buildReceiveInboundQuery().text, [
+        productId,
+        warehouseId,
+        qty,
+        slotId,
+        batchId,
+        quality,
+        movementType,
+        reason,
+        normalizedOrderId,
+        operatorId,
+      ]);
+      const lineStatus: PurchaseLineStatus = nextDoneQty >= orderedQty ? 'RECEIVED' : 'PARTIAL_RECEIVED';
+      const updatedLineResult = await client.query<ReceivedOrderLineRow>(buildUpdateReceivedOrderLineQuery().text, [
+        normalizedOrderId,
+        orderLineId,
+        nextDoneQty,
+        lineStatus,
+      ]);
+
+      await client.query('COMMIT');
+      return {
+        movement_id: Number(inboundResult.rows[0].movement_id),
+        order_line_id: Number(updatedLineResult.rows[0].order_line_id),
+        qty_done: Number(updatedLineResult.rows[0].qty_done),
+        line_status: updatedLineResult.rows[0].line_status,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      mapReceiveError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  async mrp(orderId: string) {
+    const normalizedOrderId = requireOrderId(orderId);
+    const queries = buildOrderDetailQuery();
+    const headerResult = await queryDatabase<OrderRow>(queries.header.text, [normalizedOrderId]);
+    const header = headerResult.rows[0];
+    if (!header) {
+      throw new NotFoundException('订单不存在');
+    }
+    if (header.order_type !== 'PRODUCTION') {
+      throw new BadRequestException('只有生产单可以查看缺料推衍');
+    }
+
+    const result = await queryDatabase<OrderMrpRow>(buildOrderMrpQuery().text, [normalizedOrderId]);
+    return result.rows.map((row) => ({
+      product_id: row.product_id,
+      ptype: row.ptype,
+      lvl: Number(row.lvl),
+      gross_demand: Number(row.gross_demand),
+      on_hand: Number(row.on_hand),
+      net_required: Number(row.net_required),
+    }));
   }
 }
 
@@ -261,11 +412,33 @@ function optionalNonEmptyText(value: unknown) {
   return value.trim();
 }
 
+function optionalText(value: unknown, fallback: string) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return fallback;
+  }
+  return value.trim();
+}
+
 function nullableText(value: unknown) {
   if (typeof value !== 'string' || !value.trim()) {
     return null;
   }
   return value.trim();
+}
+
+function nullableBigint(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  return requireBigint(value, 'ID 必须是正整数');
+}
+
+function requireBigint(value: unknown, message: string) {
+  const text = String(value);
+  if (!/^\d+$/.test(text)) {
+    throw new BadRequestException(message);
+  }
+  return text;
 }
 
 function requirePositiveNumber(value: unknown, message: string) {
@@ -274,6 +447,28 @@ function requirePositiveNumber(value: unknown, message: string) {
     throw new BadRequestException(message);
   }
   return numberValue;
+}
+
+function mapReceiveError(error: unknown): never {
+  if (
+    error instanceof BadRequestException ||
+    error instanceof ConflictException ||
+    error instanceof NotFoundException
+  ) {
+    throw error;
+  }
+
+  const pgError = error as { code?: string; message?: string };
+  if (pgError.code === '23514' || pgError.code === 'P0001') {
+    throw new ConflictException(pgError.message ?? '到货入库冲突');
+  }
+  if (pgError.code === '23503') {
+    throw new ConflictException('到货引用的产品、仓库、库位或订单不存在');
+  }
+  if (pgError.code === '22P02' || pgError.code === '22007') {
+    throw new BadRequestException(pgError.message ?? '到货数据不合法');
+  }
+  throw error;
 }
 
 function mapOrderError(error: unknown): never {

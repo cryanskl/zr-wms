@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildCreateOrderRequest, buildOrdersUrl, buildPatchOrderRequest, isOrderDetail } from './orderApi';
+import {
+  buildCreateOrderRequest,
+  buildOrderMrpUrl,
+  buildOrdersUrl,
+  buildPatchOrderRequest,
+  buildReceiveOrderRequest,
+  isOrderDetail,
+} from './orderApi';
 
 describe('orderApi helpers', () => {
   it('builds order list URLs with filters', () => {
@@ -38,6 +45,32 @@ describe('orderApi helpers', () => {
         body: JSON.stringify({ status: 'IN_PRODUCTION' }),
       },
     });
+  });
+
+  it('builds receive and MRP requests', () => {
+    expect(
+      buildReceiveOrderRequest(12, {
+        order_line_id: 21,
+        product_id: 'RM-001',
+        warehouse_id: 'W1',
+        slot_id: 5,
+        qty: 3,
+      }),
+    ).toEqual({
+      url: '/api/v1/orders/12/receive',
+      init: {
+        method: 'POST',
+        body: JSON.stringify({
+          order_line_id: 21,
+          product_id: 'RM-001',
+          warehouse_id: 'W1',
+          slot_id: 5,
+          qty: 3,
+        }),
+      },
+    });
+
+    expect(buildOrderMrpUrl(12)).toBe('/api/v1/orders/12/mrp');
   });
 
   it('identifies detail responses by the presence of lines', () => {

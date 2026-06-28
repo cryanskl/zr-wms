@@ -113,3 +113,76 @@ export function buildUpdateOrderHeaderQuery(): SqlQuery {
     `,
   };
 }
+
+export function buildReceiveOrderLineQuery(): SqlQuery {
+  return {
+    text: `
+      SELECT
+        order_line.order_line_id::text,
+        order_line.order_id::text,
+        order_doc.order_type,
+        order_line.product_id,
+        order_line.qty::text,
+        order_line.qty_done::text,
+        order_line.line_status
+      FROM order_line
+      JOIN order_doc ON order_doc.order_id = order_line.order_id
+      WHERE order_line.order_id = $1::bigint
+        AND order_line.order_line_id = $2::bigint
+      FOR UPDATE
+    `,
+  };
+}
+
+export function buildReceiveInboundQuery(): SqlQuery {
+  return {
+    text: `
+      SELECT op_inbound(
+        $1::text,
+        $2::text,
+        $3::numeric,
+        $4::bigint,
+        $5::bigint,
+        $6::text,
+        $7::text,
+        $8::text,
+        $9::bigint,
+        $10::bigint
+      )::text AS movement_id
+    `,
+  };
+}
+
+export function buildUpdateReceivedOrderLineQuery(): SqlQuery {
+  return {
+    text: `
+      UPDATE order_line
+      SET qty_done = $3::numeric,
+          line_status = $4::text
+      WHERE order_id = $1::bigint
+        AND order_line_id = $2::bigint
+      RETURNING
+        order_line_id::text,
+        order_id::text,
+        product_id,
+        qty::text,
+        qty_done::text,
+        line_status
+    `,
+  };
+}
+
+export function buildOrderMrpQuery(): SqlQuery {
+  return {
+    text: `
+      SELECT
+        product_id,
+        ptype,
+        lvl::text,
+        gross_demand::text,
+        on_hand::text,
+        net_required::text
+      FROM fn_order_mrp($1::bigint)
+    `,
+  };
+}

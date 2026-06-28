@@ -60,13 +60,16 @@ import {
 import {
   createOrder,
   getOrder,
+  getOrderMrp,
   listOrders,
   OrderDetail,
   OrderInput,
   OrderLineInput,
+  OrderMrpRow,
   OrderSummary,
   OrderType,
   patchOrder,
+  receiveOrder,
 } from './orderApi';
 import {
   createReservation,
@@ -161,6 +164,12 @@ export function App() {
   const [reservationSlotId, setReservationSlotId] = useState<number | null>(null);
   const [reservationQty, setReservationQty] = useState<number | null>(1);
   const [reservationBatchId, setReservationBatchId] = useState<number | null>(null);
+  const [receiveLineId, setReceiveLineId] = useState<number | null>(null);
+  const [receiveWarehouse, setReceiveWarehouse] = useState('W1');
+  const [receiveSlotId, setReceiveSlotId] = useState<number | null>(null);
+  const [receiveQty, setReceiveQty] = useState<number | null>(1);
+  const [receiveBatchId, setReceiveBatchId] = useState<number | null>(null);
+  const [receiveReason, setReceiveReason] = useState('采购到货');
 
   const searchQuery = useQuery({
     queryKey: ['search', submittedQuery],
@@ -279,10 +288,22 @@ export function App() {
     enabled: Boolean(token && selectedOrderId),
   });
 
+  const orderMrpQuery = useQuery({
+    queryKey: ['order-mrp', token, selectedOrderId],
+    queryFn: () => getOrderMrp(token, selectedOrderId ?? 0),
+    enabled: Boolean(token && selectedOrderId && orderDetailQuery.data?.order_type === 'PRODUCTION'),
+  });
+
   const reservationSlotsQuery = useQuery({
     queryKey: ['slots', token, reservationWarehouse],
     queryFn: () => getSlots(token, reservationWarehouse),
     enabled: Boolean(token && reservationWarehouse),
+  });
+
+  const receiveSlotsQuery = useQuery({
+    queryKey: ['slots', token, receiveWarehouse],
+    queryFn: () => getSlots(token, receiveWarehouse),
+    enabled: Boolean(token && receiveWarehouse),
   });
 
   useEffect(() => {
@@ -299,6 +320,13 @@ export function App() {
         status: orderDetailQuery.data.status,
       });
       setReservationProductId(orderDetailQuery.data.lines[0]?.product_id ?? '');
+      if (orderDetailQuery.data.order_type === 'PURCHASE') {
+        const nextLine =
+          orderDetailQuery.data.lines.find((line) => line.line_status !== 'CANCELLED' && line.qty_done < line.qty) ??
+          orderDetailQuery.data.lines[0];
+        setReceiveLineId(nextLine?.order_line_id ?? null);
+        setReceiveQty(nextLine ? Math.max(nextLine.qty - nextLine.qty_done, 0) || 1 : 1);
+      }
     }
   }, [orderDetailQuery.data]);
 
@@ -582,6 +610,36 @@ export function App() {
     onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '释放失败' }),
   });
 
+  const receiveOrderMutation = useMutation({
+    mutationFn: () => {
+      const detail = orderDetailQuery.data;
+      const line = detail?.lines.find((item) => item.order_line_id === receiveLineId);
+      if (!selectedOrderId || !line || !receiveSlotId || !receiveQty || receiveQty <= 0) {
+        throw new Error('请选择采购行、库位并填写正数到货数量');
+      }
+      return receiveOrder(token, selectedOrderId, {
+        order_line_id: line.order_line_id,
+        product_id: line.product_id,
+        warehouse_id: receiveWarehouse,
+        slot_id: receiveSlotId,
+        qty: receiveQty,
+        batch_id: receiveBatchId,
+        reason: receiveReason || '采购到货',
+      });
+    },
+    onSuccess: (data) => {
+      setNotice({ type: 'success', message: `已到货入库，流水 ${data.movement_id}` });
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['order-detail'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['low-stock'] });
+      void queryClient.invalidateQueries({ queryKey: ['order-mrp'] });
+    },
+    onError: (error) => setNotice({ type: 'error', message: error instanceof Error ? error.message : '到货失败' }),
+  });
+
   const fromSlotOptions = useMemo(() => slotOptions(fromSlotsQuery.data), [fromSlotsQuery.data]);
   const toSlotOptions = useMemo(() => slotOptions(toSlotsQuery.data), [toSlotsQuery.data]);
 
@@ -801,6 +859,7 @@ export function App() {
             orders={ordersQuery.data ?? []}
             detail={orderDetailQuery.data}
             reservations={orderReservationsQuery.data ?? []}
+            mrpRows={orderMrpQuery.data ?? []}
             selectedOrderId={selectedOrderId}
             typeFilter={orderTypeFilter}
             statusFilter={orderStatusFilter}
@@ -813,15 +872,23 @@ export function App() {
             reservationSlotId={reservationSlotId}
             reservationQty={reservationQty}
             reservationBatchId={reservationBatchId}
+            receiveLineId={receiveLineId}
+            receiveWarehouse={receiveWarehouse}
+            receiveSlotId={receiveSlotId}
+            receiveQty={receiveQty}
+            receiveBatchId={receiveBatchId}
+            receiveReason={receiveReason}
             warehouseOptions={warehouseOptions}
             reservationSlotOptions={slotOptions(reservationSlotsQuery.data)}
-            loading={ordersQuery.isFetching || orderDetailQuery.isFetching || orderReservationsQuery.isFetching}
+            receiveSlotOptions={slotOptions(receiveSlotsQuery.data)}
+            loading={ordersQuery.isFetching || orderDetailQuery.isFetching || orderReservationsQuery.isFetching || orderMrpQuery.isFetching}
             saving={
               createOrderMutation.isPending ||
               patchOrderMutation.isPending ||
               createReservationMutation.isPending ||
               fulfillReservationMutation.isPending ||
-              releaseReservationMutation.isPending
+              releaseReservationMutation.isPending ||
+              receiveOrderMutation.isPending
             }
             onTypeFilterChange={setOrderTypeFilter}
             onStatusFilterChange={setOrderStatusFilter}
@@ -831,6 +898,10 @@ export function App() {
               setReservationSlotId(null);
               setReservationQty(1);
               setReservationBatchId(null);
+              setReceiveLineId(null);
+              setReceiveSlotId(null);
+              setReceiveQty(1);
+              setReceiveBatchId(null);
             }}
             onDraftChange={setOrderDraft}
             onLineProductIdChange={setOrderLineProductId}
@@ -841,6 +912,12 @@ export function App() {
             onReservationSlotIdChange={setReservationSlotId}
             onReservationQtyChange={setReservationQty}
             onReservationBatchIdChange={setReservationBatchId}
+            onReceiveLineIdChange={setReceiveLineId}
+            onReceiveWarehouseChange={setReceiveWarehouse}
+            onReceiveSlotIdChange={setReceiveSlotId}
+            onReceiveQtyChange={setReceiveQty}
+            onReceiveBatchIdChange={setReceiveBatchId}
+            onReceiveReasonChange={setReceiveReason}
             onAddLine={() => {
               if (!orderLineProductId.trim() || !orderLineQty || orderLineQty <= 0) {
                 setNotice({ type: 'error', message: '请填写订单行产品和正数数量' });
@@ -859,6 +936,7 @@ export function App() {
             onCreate={() => createOrderMutation.mutate()}
             onPatch={() => patchOrderMutation.mutate()}
             onCreateReservation={() => createReservationMutation.mutate()}
+            onReceive={() => receiveOrderMutation.mutate()}
             onFulfillReservation={(reservationId) =>
               Modal.confirm({
                 title: '确认履约出库？',
@@ -1052,6 +1130,7 @@ interface OrderManagementProps {
   orders: OrderSummary[];
   detail: OrderDetail | undefined;
   reservations: ReservationRow[];
+  mrpRows: OrderMrpRow[];
   selectedOrderId: number | null;
   typeFilter: OrderType | undefined;
   statusFilter: string | undefined;
@@ -1064,8 +1143,15 @@ interface OrderManagementProps {
   reservationSlotId: number | null;
   reservationQty: number | null;
   reservationBatchId: number | null;
+  receiveLineId: number | null;
+  receiveWarehouse: string;
+  receiveSlotId: number | null;
+  receiveQty: number | null;
+  receiveBatchId: number | null;
+  receiveReason: string;
   warehouseOptions: Array<{ value: string; label: string }>;
   reservationSlotOptions: Array<{ value: number; label: string }>;
+  receiveSlotOptions: Array<{ value: number; label: string }>;
   loading: boolean;
   saving: boolean;
   onTypeFilterChange: (value: OrderType | undefined) => void;
@@ -1080,10 +1166,17 @@ interface OrderManagementProps {
   onReservationSlotIdChange: (value: number | null) => void;
   onReservationQtyChange: (value: number | null) => void;
   onReservationBatchIdChange: (value: number | null) => void;
+  onReceiveLineIdChange: (value: number | null) => void;
+  onReceiveWarehouseChange: (value: string) => void;
+  onReceiveSlotIdChange: (value: number | null) => void;
+  onReceiveQtyChange: (value: number | null) => void;
+  onReceiveBatchIdChange: (value: number | null) => void;
+  onReceiveReasonChange: (value: string) => void;
   onAddLine: () => void;
   onRemoveLine: (index: number) => void;
   onCreate: () => void;
   onPatch: () => void;
+  onReceive: () => void;
   onCreateReservation: () => void;
   onFulfillReservation: (reservationId: number) => void;
   onReleaseReservation: (reservationId: number) => void;
@@ -1093,6 +1186,7 @@ function OrderManagement({
   orders,
   detail,
   reservations,
+  mrpRows,
   selectedOrderId,
   typeFilter,
   statusFilter,
@@ -1105,8 +1199,15 @@ function OrderManagement({
   reservationSlotId,
   reservationQty,
   reservationBatchId,
+  receiveLineId,
+  receiveWarehouse,
+  receiveSlotId,
+  receiveQty,
+  receiveBatchId,
+  receiveReason,
   warehouseOptions,
   reservationSlotOptions,
+  receiveSlotOptions,
   loading,
   saving,
   onTypeFilterChange,
@@ -1121,10 +1222,17 @@ function OrderManagement({
   onReservationSlotIdChange,
   onReservationQtyChange,
   onReservationBatchIdChange,
+  onReceiveLineIdChange,
+  onReceiveWarehouseChange,
+  onReceiveSlotIdChange,
+  onReceiveQtyChange,
+  onReceiveBatchIdChange,
+  onReceiveReasonChange,
   onAddLine,
   onRemoveLine,
   onCreate,
   onPatch,
+  onReceive,
   onCreateReservation,
   onFulfillReservation,
   onReleaseReservation,
@@ -1136,6 +1244,12 @@ function OrderManagement({
   const statusOptions = orderStatusOptions(draft.order_type);
   const reservationProductOptions =
     detail?.lines.map((line) => ({ value: line.product_id, label: `${line.product_id} ${line.product_name}` })) ?? [];
+  const receiveLineOptions =
+    detail?.lines.map((line) => ({
+      value: line.order_line_id,
+      label: `${line.product_id} ${line.product_name} / 剩余 ${Math.max(line.qty - line.qty_done, 0)}`,
+    })) ?? [];
+  const selectedReceiveLine = detail?.lines.find((line) => line.order_line_id === receiveLineId);
 
   return (
     <>
@@ -1327,6 +1441,87 @@ function OrderManagement({
                 { title: '行状态', dataIndex: 'line_status' },
               ]}
             />
+
+            {detail.order_type === 'PURCHASE' && (
+              <section className="operation-panel">
+                <Title level={5}>采购到货</Title>
+                <div className="form-grid">
+                  <label>
+                    采购行
+                    <Select
+                      value={receiveLineId}
+                      options={receiveLineOptions}
+                      placeholder="选择采购行"
+                      onChange={onReceiveLineIdChange}
+                    />
+                  </label>
+                  <label>
+                    仓库
+                    <Select
+                      value={receiveWarehouse}
+                      options={warehouseOptions}
+                      onChange={(value) => {
+                        onReceiveWarehouseChange(value);
+                        onReceiveSlotIdChange(null);
+                      }}
+                    />
+                  </label>
+                  <label>
+                    库位
+                    <Select value={receiveSlotId} options={receiveSlotOptions} placeholder="选择库位" onChange={onReceiveSlotIdChange} />
+                  </label>
+                  <label>
+                    数量
+                    <InputNumber min={0.0001} value={receiveQty} onChange={onReceiveQtyChange} className="full-input" />
+                  </label>
+                  <label>
+                    批次 ID
+                    <InputNumber min={1} precision={0} value={receiveBatchId} onChange={onReceiveBatchIdChange} className="full-input" />
+                  </label>
+                  <label>
+                    原因
+                    <Input value={receiveReason} onChange={(event) => onReceiveReasonChange(event.target.value)} />
+                  </label>
+                </div>
+                {selectedReceiveLine && (
+                  <Paragraph className="helper-text">
+                    当前行剩余 {Math.max(selectedReceiveLine.qty - selectedReceiveLine.qty_done, 0)}，到货会调用 op_inbound 并挂回订单。
+                  </Paragraph>
+                )}
+                <Space className="action-row" wrap>
+                  <Button type="primary" disabled={!selectedOrderId} loading={saving} onClick={onReceive}>
+                    到货入库
+                  </Button>
+                </Space>
+              </section>
+            )}
+
+            {detail.order_type === 'PRODUCTION' && (
+              <section className="operation-panel">
+                <Title level={5}>缺料推衍</Title>
+                <Table
+                  size="small"
+                  className="inventory-table"
+                  dataSource={mrpRows}
+                  rowKey={(row) => `${row.lvl}-${row.product_id}`}
+                  pagination={false}
+                  scroll={{ x: 720 }}
+                  locale={{ emptyText: '暂无缺料推衍结果' }}
+                  columns={[
+                    { title: '层级', dataIndex: 'lvl' },
+                    { title: '产品', dataIndex: 'product_id' },
+                    { title: '类型', dataIndex: 'ptype' },
+                    { title: '毛需求', dataIndex: 'gross_demand' },
+                    { title: '在库', dataIndex: 'on_hand' },
+                    {
+                      title: '缺口',
+                      dataIndex: 'net_required',
+                      render: (value: number) => <Tag color={value > 0 ? 'red' : 'green'}>{value}</Tag>,
+                    },
+                  ]}
+                />
+              </section>
+            )}
 
             <section className="operation-panel">
               <Title level={5}>预留</Title>

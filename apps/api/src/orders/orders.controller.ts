@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { CreateOrderBody, OrdersService, PatchOrderBody } from './orders.service';
+import { CreateOrderBody, OrdersService, PatchOrderBody, ReceiveOrderBody } from './orders.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('orders')
@@ -23,8 +23,18 @@ export class OrdersController {
     return this.ordersService.detail(orderId);
   }
 
+  @Get(':id/mrp')
+  mrp(@Param('id') orderId: string) {
+    return this.ordersService.mrp(orderId);
+  }
+
   @Patch(':id')
   update(@Param('id') orderId: string, @Body() body: PatchOrderBody) {
     return this.ordersService.update(orderId, body);
+  }
+
+  @Post(':id/receive')
+  receive(@Param('id') orderId: string, @Body() body: ReceiveOrderBody, @Req() request: { user: CurrentUser }) {
+    return this.ordersService.receive(orderId, body, request.user.userId);
   }
 }

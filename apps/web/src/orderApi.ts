@@ -25,6 +25,33 @@ export interface OrderPatchInput {
   status?: string;
 }
 
+export interface ReceiveOrderInput {
+  order_line_id: number;
+  product_id: string;
+  warehouse_id: string;
+  slot_id: number;
+  qty: number;
+  batch_id?: number | null;
+  quality?: string;
+  reason?: string | null;
+}
+
+export interface ReceiveOrderResult {
+  movement_id: number;
+  order_line_id: number;
+  qty_done: number;
+  line_status: string;
+}
+
+export interface OrderMrpRow {
+  product_id: string;
+  ptype: string;
+  lvl: number;
+  gross_demand: number;
+  on_hand: number;
+  net_required: number;
+}
+
 export interface OrderSummary {
   order_id: number;
   order_type: OrderType;
@@ -83,6 +110,20 @@ export function buildPatchOrderRequest(orderId: number, input: OrderPatchInput) 
   };
 }
 
+export function buildReceiveOrderRequest(orderId: number, input: ReceiveOrderInput) {
+  return {
+    url: `/api/v1/orders/${orderId}/receive`,
+    init: {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  };
+}
+
+export function buildOrderMrpUrl(orderId: number) {
+  return `/api/v1/orders/${orderId}/mrp`;
+}
+
 export function listOrders(token: string, filters: OrderFilters = {}) {
   return apiFetch<OrderSummary[]>(buildOrdersUrl(filters), token);
 }
@@ -99,6 +140,15 @@ export function getOrder(token: string, orderId: number) {
 export function patchOrder(token: string, orderId: number, input: OrderPatchInput) {
   const request = buildPatchOrderRequest(orderId, input);
   return apiFetch<OrderDetail>(request.url, token, request.init);
+}
+
+export function receiveOrder(token: string, orderId: number, input: ReceiveOrderInput) {
+  const request = buildReceiveOrderRequest(orderId, input);
+  return apiFetch<ReceiveOrderResult>(request.url, token, request.init);
+}
+
+export function getOrderMrp(token: string, orderId: number) {
+  return apiFetch<OrderMrpRow[]>(buildOrderMrpUrl(orderId), token);
 }
 
 async function apiFetch<T>(url: string, token: string, init: RequestInit = {}): Promise<T> {
