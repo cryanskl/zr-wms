@@ -9,5 +9,6 @@ dist/
 logs/
 coverage/
 .playwright-cli/
+.superpowers/
 apps/api/dist/
 apps/web/dist/
