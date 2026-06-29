@@ -112,7 +112,7 @@ start_service() {
   local log_file="$2"
   shift 2
 
-  log "启动 $name，日志写入 $log_file"
+  log "启动 ${name}，日志写入 ${log_file}"
   "$@" >"$log_file" 2>&1 &
   local pid=$!
   log "$name PID: $pid"

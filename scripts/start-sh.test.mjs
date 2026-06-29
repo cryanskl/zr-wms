@@ -23,3 +23,10 @@ test('start.sh is executable and covers the local startup workflow', async () =>
   assert.match(script, /pnpm --filter @zr-wms\/web dev/);
   assert.match(script, /open "\$APP_URL"/);
 });
+
+test('start.sh braces variables before non-ascii log text', async () => {
+  const script = await readFile(scriptPath, 'utf8');
+
+  assert.doesNotMatch(script, /\$name[^\w\s$"']/);
+  assert.match(script, /启动 \$\{name\}/);
+});
