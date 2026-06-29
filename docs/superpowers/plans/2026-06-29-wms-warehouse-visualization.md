@@ -4,7 +4,7 @@
 
 **Goal:** Add a usable warehouse map slice: four different warehouse layouts, reusable warehouse/rack templates, product visual locations across warehouses/racks, and top/elevation views.
 
-**Architecture:** Add an additive visualization schema beside the authoritative WMS schema. Backend exposes authenticated layout/template/product-location APIs using raw PostgreSQL queries. Frontend adds a mobile-aware `仓库地图` page with locate mode for all users and design mode for ADMIN/BOSS. Inventory writes remain untouched and continue to go through existing `op_*` procedures only.
+**Architecture:** Add an additive visualization schema beside the authoritative WMS schema. Backend exposes authenticated layout/template/product-location APIs using raw PostgreSQL queries. Frontend adds a mobile-aware `仓库地图` page with locate mode for all users and design mode for ADMIN/BOSS. `仓库地图` is a new query/visualization entry; it does not replace existing `出入库`, `订单`, `产品管理/BOM`, `仓库库位`, or `库存看板` workflows. Inventory writes remain untouched and continue to go through existing `op_*` procedures only.
 
 **Tech Stack:** TypeScript, NestJS, PostgreSQL raw SQL, React, Vite, Ant Design, TanStack Query, Vitest, Chrome MCP/browser verification.
 
@@ -14,10 +14,43 @@
 - Do not edit `docs/wms_schema_v1.7.sql`, `docs/wms_procedures_v1.7.sql`, or `docs/wms_logic_v1.7.sql`.
 - Do not `UPDATE`, `DELETE`, or direct-write `inventory` or `stock_movement` from application code. Product visual locations are read-only queries.
 - New visualization tables describe spatial layout only. Stock truth stays in existing `warehouse`, `slot`, `inventory`, and `stock_movement`.
+- Existing operational modules stay in place. Do not move inbound/outbound/transfer, order workflows, product master data, BOM editing, stocktake, import, export, or operation logs into the warehouse map.
+- `仓库地图` may link to product/location context, but it must not become the place to edit BOM, create orders, or perform stock movements.
 - Layout editing and template creation must be enforced by backend guards with `ADMIN` / `BOSS`; do not rely on frontend hiding.
 - Keep the first implementation minimal: no full 3D, no automatic picking recommendation, no inventory-changing action from the map.
 - Follow existing project patterns: flat NestJS services/controllers in `apps/api/src`, query-builder tests that assert SQL text, API helper tests in `apps/web/src`, and conditional rendering from `apps/web/src/App.tsx`.
 - Commit after each completed, verified task that is independently safe to save. Before each commit run `git branch --show-current && git rev-parse --show-toplevel`.
+
+---
+
+## Global Navigation And Module Ownership
+
+The warehouse visualization slice must fit into the current WMS information architecture instead of flattening the whole system into one warehouse-management page.
+
+| Navigation Area | Existing/New Entry | Frontend View | Backend Ownership | Scope |
+|---|---|---|---|---|
+| 日常操作 | `出入库` | `operations` in `apps/web/src/App.tsx` | `StockController` | Product search, inbound, outbound, forced outbound, transfer, current stock list. |
+| 日常操作 | `订单` | `orders` in `apps/web/src/App.tsx` | `OrdersController`, `ReservationsController` | Purchase/production orders, order lines, MRP, receive, reserve, fulfill, release. |
+| 日常操作 | `盘点` | `stocktakes` in `apps/web/src/App.tsx` | `StocktakesController` | Create stocktake, add counted line, apply stocktake through the stored procedure path. |
+| 查询分析 | `库存看板` | `dashboard` in `apps/web/src/App.tsx` | `StockController`, `ReportsController` | Inventory summary, inventory filters, low-stock view. |
+| 查询分析 | `仓库地图` | new `warehouseMap` view | new warehouse-layout controllers | Spatial warehouse/rack/slot visualization, product visual location, admin layout design. |
+| 查询分析 | `报表` | `reports` in `apps/web/src/App.tsx` | `ReportsController` | Period report, dead stock, slot utilization, export. |
+| 主数据 | `产品管理` | `products` in `apps/web/src/App.tsx` | `ProductsController`, `BomController` | Product CRUD, aliases, images, price, BOM replace, where-used, path aliases, producible calculation. |
+| 主数据 | `仓库库位` | `warehouses` in `apps/web/src/App.tsx` | `WarehousesController` | Warehouse records, slot generation, slot status. |
+| 系统管理 | `导入` | `imports` in `apps/web/src/App.tsx` | `ImportsController` | Product, inventory, BOM imports. |
+| 系统管理 | `操作日志` | `operationLogs` in `apps/web/src/App.tsx` | `OperationLogsController` | Admin operation audit logs. |
+
+Role visibility contract:
+
+- `OPERATOR`: can see `出入库`, `订单`, `盘点`, `库存看板`, and `仓库地图` locate mode.
+- `ADMIN`: can additionally see management entries such as `报表`, `导入`, `产品管理`, `仓库库位`, `操作日志`, and `仓库地图` design mode.
+- `BOSS`: follows ADMIN visibility for this slice, with existing price-edit restrictions unchanged.
+
+Cross-linking rules:
+
+- From `仓库地图`, clicking a product may set context or offer a link back to `产品管理`, but BOM editing remains in `产品管理`.
+- From `仓库地图`, clicking a stock location may show read-only location details, but inbound/outbound/transfer remains in `出入库`.
+- From `仓库地图`, clicking shortage/order context may link to `订单`, but order creation and MRP stay in `订单`.
 
 ---
 
@@ -405,10 +438,19 @@ git commit -m "Add warehouse map frontend data helpers"
 - [ ] Create `apps/web/src/WarehouseMapPage.tsx`.
 - [ ] Move page-specific component code out of `apps/web/src/App.tsx` to keep the existing large file from growing further.
 - [ ] Add `warehouseMap` to the `ActiveView` union in `apps/web/src/App.tsx`.
+- [ ] Preserve existing navigation entries and their current ownership:
+  - Keep `出入库` mapped to `operations`.
+  - Keep `订单` mapped to `orders`.
+  - Keep `盘点` mapped to `stocktakes`.
+  - Keep `库存看板` mapped to `dashboard`.
+  - Keep `产品管理` mapped to `products`; BOM stays inside this view.
+  - Keep `仓库库位` mapped to `warehouses`; slot master data stays inside this view.
+  - Keep `报表`, `导入`, and `操作日志` with their existing role visibility.
 - [ ] Add a nav option:
   - label: `仓库地图`
   - value: `warehouseMap`
   - icon: `MapPinned`
+- [ ] Place `仓库地图` next to query/analysis entries, preferably after `库存看板` and before admin-only management entries.
 - [ ] Render `<WarehouseMapPage token={token} user={auth.user} />` when `activeView === 'warehouseMap'`.
 - [ ] Add CSS to `apps/web/src/styles.css` using stable responsive dimensions:
   - desktop: left warehouse rail, center map surface, right product panel.
@@ -426,6 +468,9 @@ git commit -m "Add warehouse map frontend data helpers"
   - All matched warehouses/racks/slots highlight at once.
   - Clicking a location card selects its warehouse and rack. If mapped, switch/keep view based on user-selected `top` or `elevation`.
   - Unmapped stock rows stay visible with `未映射到平面图位置`.
+  - Do not expose inbound/outbound/transfer submission from this page; show read-only stock location context only.
+  - Do not expose BOM editing from this page; product/BOM maintenance remains in `产品管理`.
+  - Do not expose order creation or MRP editing from this page; order workflows remain in `订单`.
 - [ ] View switch:
   - Use Ant Design `Segmented` with `俯视图` / `立面图`.
   - Top view highlights rack blocks.
@@ -467,9 +512,14 @@ Browser verification:
 
 - Start local app with `./start.sh`.
 - Login as operator.
+- Confirm the navigation still includes `出入库`, `订单`, `盘点`, `库存看板`, and `仓库地图`.
 - Confirm `仓库地图` opens, locate mode works, and design controls are not visible.
+- Confirm `出入库` still contains inbound/outbound/transfer controls.
+- Confirm `订单` still contains order creation, reservation, receive, and MRP controls.
 - Login as admin.
 - Confirm design mode toggle appears.
+- Confirm `产品管理` is still visible and still contains BOM, where-used, path aliases, and producible calculation.
+- Confirm `仓库库位` is still visible and still manages warehouse records and slots.
 - Create or edit a W1 layout.
 - Search a product with inventory in multiple warehouses.
 - Confirm product is highlighted in every matched warehouse/rack and listed in the location panel.
@@ -520,6 +570,10 @@ curl -s -X POST http://127.0.0.1:3000/api/v1/auth/login \
   - `GET /products/:id/visual-locations` returns mapped and unmapped stock rows.
   - Version conflict on layout save returns `409 布局已被其他人修改，请刷新后重试`.
 - [ ] Browser acceptance checks:
+  - Existing `出入库`, `订单`, `盘点`, `库存看板`, `产品管理`, `仓库库位`, `报表`, `导入`, and `操作日志` entries keep their intended role visibility.
+  - `产品管理` still owns BOM editing, where-used, path aliases, and producible calculation.
+  - `出入库` still owns inbound, outbound, forced outbound, and transfer actions.
+  - `订单` still owns order creation, MRP, reservation, fulfillment, release, and purchase receive.
   - Four warehouses can each show a different map.
   - Warehouse templates and rack templates are visible to admin.
   - Product type filter narrows search/selection.
@@ -576,6 +630,7 @@ If final verification changes no files, skip the final commit and run only `git 
 ## Acceptance Summary
 
 - [ ] 4 warehouses can have distinct saved visual layouts.
+- [ ] `仓库地图` is added as a visualization/query page without displacing `出入库`, `订单`, `产品管理/BOM`, `仓库库位`, or `库存看板`.
 - [ ] Admin can use warehouse templates and rack templates.
 - [ ] Operator can locate products but cannot enter design mode.
 - [ ] Admin/BOSS can enter design mode and save layout edits.
