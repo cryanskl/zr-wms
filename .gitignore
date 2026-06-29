@@ -6,6 +6,7 @@ dist/
 *.tsbuildinfo
 .~*
 *.log
+logs/
 coverage/
 .playwright-cli/
 apps/api/dist/

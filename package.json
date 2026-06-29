@@ -9,7 +9,7 @@
     "dev:web": "pnpm --filter @zr-wms/web dev",
     "build": "pnpm --recursive build",
     "typecheck": "pnpm --recursive typecheck",
-    "test": "pnpm --recursive test",
+    "test": "node --test scripts/*.test.mjs && pnpm --recursive test",
     "db:setup": "tsx scripts/setup-db.ts",
     "db:setup:reset": "tsx scripts/setup-db.ts --reset-public-schema"
   },
