@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS layout_zone (
   updated_by bigint REFERENCES app_user(user_id),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (layout_id, code)
+  UNIQUE (layout_id, code),
+  CONSTRAINT layout_zone_zone_id_layout_id_key UNIQUE (zone_id, layout_id)
 );
 
 CREATE TABLE IF NOT EXISTS rack_layout (
@@ -73,7 +74,10 @@ CREATE TABLE IF NOT EXISTS rack_layout (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (layout_id, code),
-  UNIQUE (rack_layout_id, layout_id)
+  UNIQUE (rack_layout_id, layout_id),
+  CONSTRAINT rack_layout_zone_layout_fk FOREIGN KEY (zone_id, layout_id)
+    REFERENCES layout_zone(zone_id, layout_id)
+    ON DELETE SET NULL (zone_id)
 );
 
 CREATE TABLE IF NOT EXISTS rack_slot_map (
@@ -94,6 +98,57 @@ CREATE TABLE IF NOT EXISTS rack_slot_map (
   UNIQUE (layout_id, slot_id)
 );
 
+CREATE OR REPLACE FUNCTION validate_rack_slot_map_warehouse()
+RETURNS trigger AS $$
+DECLARE
+  layout_warehouse_id text;
+  slot_warehouse_id text;
+BEGIN
+  SELECT warehouse_id INTO layout_warehouse_id
+  FROM warehouse_layout
+  WHERE layout_id = NEW.layout_id;
+
+  SELECT warehouse_id INTO slot_warehouse_id
+  FROM slot
+  WHERE slot_id = NEW.slot_id;
+
+  IF layout_warehouse_id IS DISTINCT FROM slot_warehouse_id THEN
+    RAISE EXCEPTION 'rack_slot_map slot % belongs to warehouse %, not layout % warehouse %',
+      NEW.slot_id, slot_warehouse_id, NEW.layout_id, layout_warehouse_id
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'layout_zone_zone_id_layout_id_key'
+      AND conrelid = 'layout_zone'::regclass
+  ) THEN
+    ALTER TABLE layout_zone
+      ADD CONSTRAINT layout_zone_zone_id_layout_id_key UNIQUE (zone_id, layout_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'rack_layout_zone_layout_fk'
+      AND conrelid = 'rack_layout'::regclass
+  ) THEN
+    ALTER TABLE rack_layout
+      ADD CONSTRAINT rack_layout_zone_layout_fk
+      FOREIGN KEY (zone_id, layout_id)
+      REFERENCES layout_zone(zone_id, layout_id)
+      ON DELETE SET NULL (zone_id);
+  END IF;
+END;
+$$;
+
 CREATE INDEX IF NOT EXISTS idx_layout_zone_layout ON layout_zone(layout_id);
 CREATE INDEX IF NOT EXISTS idx_rack_layout_layout ON rack_layout(layout_id);
 CREATE INDEX IF NOT EXISTS idx_rack_layout_template ON rack_layout(template_id);
@@ -103,31 +158,53 @@ CREATE INDEX IF NOT EXISTS idx_rack_slot_map_slot ON rack_slot_map(slot_id);
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_warehouse_layout_updated'
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_warehouse_layout_updated'
+      AND tgrelid = 'warehouse_layout'::regclass
   ) THEN
     CREATE TRIGGER trg_warehouse_layout_updated BEFORE UPDATE ON warehouse_layout
       FOR EACH ROW EXECUTE FUNCTION set_updated_at();
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_layout_zone_updated'
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_layout_zone_updated'
+      AND tgrelid = 'layout_zone'::regclass
   ) THEN
     CREATE TRIGGER trg_layout_zone_updated BEFORE UPDATE ON layout_zone
       FOR EACH ROW EXECUTE FUNCTION set_updated_at();
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_rack_layout_updated'
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_rack_layout_updated'
+      AND tgrelid = 'rack_layout'::regclass
   ) THEN
     CREATE TRIGGER trg_rack_layout_updated BEFORE UPDATE ON rack_layout
       FOR EACH ROW EXECUTE FUNCTION set_updated_at();
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_rack_slot_map_updated'
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_rack_slot_map_updated'
+      AND tgrelid = 'rack_slot_map'::regclass
   ) THEN
     CREATE TRIGGER trg_rack_slot_map_updated BEFORE UPDATE ON rack_slot_map
       FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_rack_slot_map_warehouse'
+      AND tgrelid = 'rack_slot_map'::regclass
+  ) THEN
+    CREATE TRIGGER trg_rack_slot_map_warehouse BEFORE INSERT OR UPDATE ON rack_slot_map
+      FOR EACH ROW EXECUTE FUNCTION validate_rack_slot_map_warehouse();
   END IF;
 END;
 $$;
