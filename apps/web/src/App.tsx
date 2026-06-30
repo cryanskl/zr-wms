@@ -123,11 +123,13 @@ import {
 } from './reportApi';
 import { ImportResult, ImportType, importExcel } from './importApi';
 import { getOperationLogs, OperationLogRow } from './operationLogApi';
+import { WarehouseMapPage } from './WarehouseMapPage';
 
 const { Title, Paragraph, Text } = Typography;
 type ActiveView =
   | 'operations'
   | 'dashboard'
+  | 'warehouseMap'
   | 'reports'
   | 'imports'
   | 'operationLogs'
@@ -552,6 +554,7 @@ export function App() {
       { label: '订单', value: 'orders', icon: <ScrollText size={16} /> },
       { label: '盘点', value: 'stocktakes', icon: <ClipboardCheck size={16} /> },
       { label: '库存看板', value: 'dashboard', icon: <Boxes size={16} /> },
+      { label: '仓库地图', value: 'warehouseMap', icon: <MapPinned size={16} /> },
       ...(canManageProducts
         ? [
             { label: '报表', value: 'reports' as const, icon: <BarChart3 size={16} /> },
@@ -1235,6 +1238,8 @@ export function App() {
             onWarehouseChange={setDashboardWarehouse}
             onQualityChange={setDashboardQuality}
           />
+        ) : activeView === 'warehouseMap' ? (
+          <WarehouseMapPage token={token} user={auth.user} />
         ) : activeView === 'reports' ? (
           <ReportsView
             range={reportRange}

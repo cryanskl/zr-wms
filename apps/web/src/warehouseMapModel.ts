@@ -1,4 +1,6 @@
 import type {
+  WarehouseLayout,
+  WarehouseLayoutSaveInput,
   ProductVisualHighlightKind,
   ProductVisualLocation,
   RackLayout,
@@ -93,6 +95,45 @@ export function normalizeCanvasPosition(value: number, gridSize: number) {
   }
 
   return Math.max(0, Math.round(value / gridSize) * gridSize);
+}
+
+export function buildWarehouseLayoutSaveInput(layout: WarehouseLayout): WarehouseLayoutSaveInput {
+  return {
+    version: layout.version,
+    name: layout.name,
+    canvas_width: layout.canvas_width,
+    canvas_height: layout.canvas_height,
+    grid_size: layout.grid_size,
+    zones: layout.zones.map((zone) => ({
+      zone_id: zone.zone_id > 0 ? zone.zone_id : undefined,
+      code: zone.code,
+      name: zone.name,
+      x: zone.x,
+      y: zone.y,
+      width: zone.width,
+      height: zone.height,
+      color: zone.color,
+      seq: zone.seq,
+    })),
+    racks: layout.racks.map((rack) => ({
+      rack_layout_id: rack.rack_layout_id > 0 ? rack.rack_layout_id : undefined,
+      template_id: rack.template_id,
+      zone_id: rack.zone_id && rack.zone_id > 0 ? rack.zone_id : null,
+      code: rack.code,
+      name: rack.name,
+      x: rack.x,
+      y: rack.y,
+      rotation: rack.rotation,
+      seq: rack.seq,
+      slot_maps: rack.slot_maps.map((map) => ({
+        map_id: map.map_id > 0 ? map.map_id : undefined,
+        slot_id: map.slot_id,
+        bay_no: map.bay_no,
+        level_no: map.level_no,
+        position: map.position,
+      })),
+    })),
+  };
 }
 
 function buildCoordinateKey(bayNo: number, levelNo: number, position: string) {

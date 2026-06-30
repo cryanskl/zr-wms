@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProductVisualLocation, RackLayout, RackSlotMap, RackTemplate } from './warehouseMapApi';
 import {
   buildElevationCells,
+  buildWarehouseLayoutSaveInput,
   getRackHitCount,
   getWarehouseHitCount,
   groupLocationsByWarehouse,
@@ -131,5 +132,60 @@ describe('warehouseMapModel helpers', () => {
     expect(normalizeCanvasPosition(10, 20)).toBe(20);
     expect(normalizeCanvasPosition(-4, 20)).toBe(0);
     expect(normalizeCanvasPosition(37, 0)).toBe(37);
+  });
+
+  it('builds save input from a warehouse layout draft', () => {
+    const layout = {
+      layout_id: 7,
+      warehouse_id: 'W1',
+      layout_template_id: null,
+      name: 'W1 layout',
+      version: 3,
+      canvas_width: 1000,
+      canvas_height: 640,
+      grid_size: 20,
+      created_at: '2026-06-30',
+      updated_at: '2026-06-30',
+      zones: [
+        { zone_id: 1, code: 'A', name: 'A区', x: 20, y: 40, width: 260, height: 180, color: '#edf2ff', seq: 1 },
+      ],
+      racks: [
+        {
+          rack_layout_id: 101,
+          template_id: 1,
+          zone_id: 1,
+          code: 'R1',
+          name: 'R1',
+          x: 80,
+          y: 100,
+          rotation: 0,
+          seq: 1,
+          slot_maps: [{ map_id: 5, slot_id: 11, slot_code: 'A-01', bay_no: 1, level_no: 1, position: 'A' }],
+        },
+      ],
+    };
+
+    expect(buildWarehouseLayoutSaveInput(layout)).toEqual({
+      version: 3,
+      name: 'W1 layout',
+      canvas_width: 1000,
+      canvas_height: 640,
+      grid_size: 20,
+      zones: [{ zone_id: 1, code: 'A', name: 'A区', x: 20, y: 40, width: 260, height: 180, color: '#edf2ff', seq: 1 }],
+      racks: [
+        {
+          rack_layout_id: 101,
+          template_id: 1,
+          zone_id: 1,
+          code: 'R1',
+          name: 'R1',
+          x: 80,
+          y: 100,
+          rotation: 0,
+          seq: 1,
+          slot_maps: [{ map_id: 5, slot_id: 11, bay_no: 1, level_no: 1, position: 'A' }],
+        },
+      ],
+    });
   });
 });
