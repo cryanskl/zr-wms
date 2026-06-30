@@ -98,6 +98,8 @@ export function normalizeCanvasPosition(value: number, gridSize: number) {
 }
 
 export function buildWarehouseLayoutSaveInput(layout: WarehouseLayout): WarehouseLayoutSaveInput {
+  const zoneCodeById = new Map(layout.zones.map((zone) => [zone.zone_id, zone.code]));
+
   return {
     version: layout.version,
     name: layout.name,
@@ -119,6 +121,7 @@ export function buildWarehouseLayoutSaveInput(layout: WarehouseLayout): Warehous
       rack_layout_id: rack.rack_layout_id > 0 ? rack.rack_layout_id : undefined,
       template_id: rack.template_id,
       zone_id: rack.zone_id && rack.zone_id > 0 ? rack.zone_id : null,
+      ...(rack.zone_id && rack.zone_id <= 0 ? { zone_code: zoneCodeById.get(rack.zone_id) ?? null } : {}),
       code: rack.code,
       name: rack.name,
       x: rack.x,

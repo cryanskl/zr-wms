@@ -318,6 +318,7 @@ body {
   display: grid;
   gap: 12px;
   min-height: 420px;
+  overflow-x: auto;
   padding: 12px;
   border: 1px solid #dce2ec;
   border-radius: 8px;
@@ -329,6 +330,7 @@ body {
   grid-template-columns: repeat(var(--elevation-columns), minmax(74px, 1fr));
   gap: 8px;
   align-content: start;
+  min-width: max-content;
 }
 
 .rack-elevation-cell {

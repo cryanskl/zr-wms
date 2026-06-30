@@ -188,4 +188,43 @@ describe('warehouseMapModel helpers', () => {
       ],
     });
   });
+
+  it('keeps rack association with a newly-created zone by code', () => {
+    const layout = {
+      layout_id: 7,
+      warehouse_id: 'W1',
+      layout_template_id: null,
+      name: 'W1 layout',
+      version: 3,
+      canvas_width: 1000,
+      canvas_height: 640,
+      grid_size: 20,
+      created_at: '2026-06-30',
+      updated_at: '2026-06-30',
+      zones: [
+        { zone_id: -1001, code: 'TEMP-A', name: '临时A区', x: 20, y: 40, width: 260, height: 180, color: '#edf2ff', seq: 1 },
+      ],
+      racks: [
+        {
+          rack_layout_id: -2001,
+          template_id: 1,
+          zone_id: -1001,
+          code: 'R-TEMP-1',
+          name: '临时货架1',
+          x: 80,
+          y: 100,
+          rotation: 0,
+          seq: 1,
+          slot_maps: [],
+        },
+      ],
+    };
+
+    expect(buildWarehouseLayoutSaveInput(layout).racks[0]).toMatchObject({
+      rack_layout_id: undefined,
+      zone_id: null,
+      zone_code: 'TEMP-A',
+    });
+    expect(buildWarehouseLayoutSaveInput(layout).zones[0].zone_id).toBeUndefined();
+  });
 });
