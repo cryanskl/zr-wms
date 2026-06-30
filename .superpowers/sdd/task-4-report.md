@@ -85,3 +85,28 @@ pnpm --filter @zr-wms/api test -- apps/api/src/warehouse-layouts/visual-location
 
 - brief 的示例字段写了 `position_code`，但当前 schema 的实际列名是 `rack_slot_map.position`；实现使用 `rsm.position AS position_code` 对外兼容 brief。
 - 本任务没有启动本地 API 服务做 curl 验证，因为要求的验证项是 API test/typecheck；当前没有在报告中声明真实数据库样例响应。
+
+## Fix 2026-06-30: Critical SQL review findings
+
+### 修复内容
+
+- 移除 product visual locations SQL 对不存在字段 `inventory.reserved_qty` 的引用。
+- 使用 `fn_available(i.product_id, i.warehouse_id, i.slot_id, i.batch_id, i.quality)` 计算 `available_qty`。
+- 使用 `qty_on_hand - available_qty` 推出冻结/预留数量，SQL 内部命名为 `frozen_qty`，服务层继续映射为响应字段 `reserved_qty`。
+- 修正排序列为真实字段 `rl.code`，保留 `rl.code AS rack_code` 的响应 alias。
+- 更新 query builder 测试，断言 SQL 不出现 `reserved_qty`、不出现 `rl.rack_code`、出现 `fn_available`，并继续覆盖保留 unmapped rows 的 `LEFT JOIN`。
+
+### RED/GREEN 证据
+
+- RED：更新测试后运行 `pnpm --filter @zr-wms/api test -- apps/api/src/warehouse-layouts/visual-location-queries.spec.ts`，失败 2 个断言，分别暴露旧 SQL 仍引用 `i.reserved_qty` 和 `ORDER BY rl.rack_code`。
+- GREEN：修复实现与 service mock 后运行 `pnpm --filter @zr-wms/api test -- apps/api/src/warehouse-layouts/visual-location-queries.spec.ts apps/api/src/warehouse-layouts/warehouse-layouts.service.spec.ts`，19 个 test files / 61 个 tests 通过。
+
+### 验证结果
+
+- `pnpm --filter @zr-wms/api test`：通过，19 个 test files / 61 个 tests。
+- `pnpm --filter @zr-wms/api typecheck`：通过。
+- 库存红线扫描：无输出。
+
+### 顾虑
+
+- 用户消息中写的 `fn_available(product_id, warehouse_id, slot_id, quality, batch_id)` 参数顺序与权威 `docs/wms_procedures_v1.7.sql` 不一致；本修复按权威 SQL 和现有 `stock-read-queries.ts` 调用方式使用 `(product, warehouse, slot, batch, quality)`。

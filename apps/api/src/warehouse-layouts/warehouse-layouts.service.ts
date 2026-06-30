@@ -206,7 +206,7 @@ interface ProductVisualLocationRow {
   quality: string;
   batch_id: string | null;
   qty_on_hand: string;
-  reserved_qty: string;
+  frozen_qty: string;
   available_qty: string;
   highlight_kind: 'GOOD' | 'DEFECTIVE' | 'UNAVAILABLE' | 'UNMAPPED';
 }
@@ -583,7 +583,7 @@ function mapProductVisualLocationRow(row: ProductVisualLocationRow) {
     quality: row.quality,
     batch_id: row.batch_id,
     qty_on_hand: Number(row.qty_on_hand),
-    reserved_qty: Number(row.reserved_qty),
+    reserved_qty: Number(row.frozen_qty),
     available_qty: Number(row.available_qty),
     highlight_kind: row.highlight_kind,
   };
