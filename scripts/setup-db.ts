@@ -12,6 +12,7 @@ const orderedSqlFiles = [
   'docs/wms_logic_v1.7.sql',
   'scripts/sql/app-auth.sql',
   'scripts/sql/seed-foundation.sql',
+  'scripts/sql/warehouse-visualization.sql',
 ];
 
 async function readSql(relativePath: string) {
