@@ -27,6 +27,7 @@ import { StockController } from './stock/stock.controller';
 import { StockService } from './stock/stock.service';
 import { StocktakesController } from './stocktakes/stocktakes.controller';
 import { StocktakesService } from './stocktakes/stocktakes.service';
+import { ProductVisualLocationsController } from './warehouse-layouts/product-visual-locations.controller';
 import { WarehouseLayoutsController } from './warehouse-layouts/warehouse-layouts.controller';
 import { WarehouseLayoutsService } from './warehouse-layouts/warehouse-layouts.service';
 import { WarehousesController } from './warehouses/warehouses.controller';
@@ -54,6 +55,7 @@ import { WarehousesService } from './warehouses/warehouses.service';
     ReportsController,
     StockController,
     StocktakesController,
+    ProductVisualLocationsController,
     WarehouseLayoutsController,
     WarehousesController,
   ],

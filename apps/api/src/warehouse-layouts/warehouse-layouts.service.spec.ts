@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ROLES_KEY } from '../auth/roles.decorator';
@@ -244,6 +245,71 @@ describe('WarehouseLayoutsService', () => {
     expect(queryMock).toHaveBeenNthCalledWith(3, expect.stringContaining('FROM slot'), [401, 'W1']);
     expect(queryMock).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO rack_slot_map'), expect.any(Array));
   });
+
+  it('returns product visual locations with mapped and unmapped stock rows', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        productVisualLocationRow(),
+        productVisualLocationRow({
+          warehouse_id: 'W2',
+          warehouse_name: '二号仓',
+          slot_id: '502',
+          slot_code: 'W2-A-01',
+          rack_layout_id: null,
+          rack_code: null,
+          bay_no: null,
+          level_no: null,
+          position_code: null,
+          quality: 'HOLD',
+          qty_on_hand: '0',
+          reserved_qty: '3',
+          available_qty: '-3',
+          highlight_kind: 'UNMAPPED',
+        }),
+      ],
+    });
+
+    await expect(new WarehouseLayoutsService().getProductVisualLocations('rm-001')).resolves.toEqual([
+      {
+        product_id: 'RM-001',
+        warehouse_id: 'W1',
+        warehouse_name: '一号仓',
+        slot_id: 501,
+        slot_code: 'W1-A-01',
+        rack_layout_id: 701,
+        rack_code: 'R01',
+        bay_no: 1,
+        level_no: 2,
+        position_code: 'A',
+        quality: 'GOOD',
+        batch_id: 'B-001',
+        qty_on_hand: 12,
+        reserved_qty: 2,
+        available_qty: 10,
+        highlight_kind: 'GOOD',
+      },
+      {
+        product_id: 'RM-001',
+        warehouse_id: 'W2',
+        warehouse_name: '二号仓',
+        slot_id: 502,
+        slot_code: 'W2-A-01',
+        rack_layout_id: null,
+        rack_code: null,
+        bay_no: null,
+        level_no: null,
+        position_code: null,
+        quality: 'HOLD',
+        batch_id: 'B-001',
+        qty_on_hand: 0,
+        reserved_qty: 3,
+        available_qty: -3,
+        highlight_kind: 'UNMAPPED',
+      },
+    ]);
+
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('FROM inventory i'), ['RM-001']);
+  });
 });
 
 describe('WarehouseLayoutsController contract', () => {
@@ -272,6 +338,24 @@ describe('WarehouseLayoutsController contract', () => {
     expect(createRoles).toEqual(['ADMIN', 'BOSS']);
     expect(saveRoles).toEqual(['ADMIN', 'BOSS']);
     expect(rackTemplateRoles).toEqual(['ADMIN', 'BOSS']);
+  });
+});
+
+describe('ProductVisualLocationsController contract', () => {
+  it('requires JWT without role metadata and delegates product id to WarehouseLayoutsService', async () => {
+    const { JwtAuthGuard } = await import('../auth/jwt-auth.guard');
+    const { ProductVisualLocationsController } = await import('./product-visual-locations.controller');
+    const service = { getProductVisualLocations: vi.fn().mockResolvedValue([]) };
+    const controller = new ProductVisualLocationsController(service as never);
+
+    await expect(controller.productVisualLocations('RM-001')).resolves.toEqual([]);
+
+    const reflector = new Reflector();
+    const guards = reflector.get<unknown[]>(GUARDS_METADATA, ProductVisualLocationsController) ?? [];
+
+    expect(service.getProductVisualLocations).toHaveBeenCalledWith('RM-001');
+    expect(guards).toContain(JwtAuthGuard);
+    expect(reflector.get(ROLES_KEY, controller.productVisualLocations)).toBeUndefined();
   });
 });
 
@@ -309,6 +393,28 @@ function activeLayoutRow(overrides: Record<string, unknown> = {}) {
     bay_no: 1,
     level_no: 1,
     position: 'A',
+    ...overrides,
+  };
+}
+
+function productVisualLocationRow(overrides: Record<string, unknown> = {}) {
+  return {
+    product_id: 'RM-001',
+    warehouse_id: 'W1',
+    warehouse_name: '一号仓',
+    slot_id: '501',
+    slot_code: 'W1-A-01',
+    rack_layout_id: '701',
+    rack_code: 'R01',
+    bay_no: 1,
+    level_no: 2,
+    position_code: 'A',
+    quality: 'GOOD',
+    batch_id: 'B-001',
+    qty_on_hand: '12',
+    reserved_qty: '2',
+    available_qty: '10',
+    highlight_kind: 'GOOD',
     ...overrides,
   };
 }

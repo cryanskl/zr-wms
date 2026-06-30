@@ -21,6 +21,7 @@ import {
   buildUpdateLayoutHeaderQuery,
   buildWarehouseLayoutTemplatesQuery,
 } from './warehouse-layout-queries';
+import { buildProductVisualLocationsQuery } from './visual-location-queries';
 
 export interface RackTemplateBody {
   code?: string;
@@ -191,6 +192,25 @@ interface RackSlotMapRow {
   position: string;
 }
 
+interface ProductVisualLocationRow {
+  product_id: string;
+  warehouse_id: string;
+  warehouse_name: string;
+  slot_id: string | null;
+  slot_code: string | null;
+  rack_layout_id: string | null;
+  rack_code: string | null;
+  bay_no: number | null;
+  level_no: number | null;
+  position_code: string | null;
+  quality: string;
+  batch_id: string | null;
+  qty_on_hand: string;
+  reserved_qty: string;
+  available_qty: string;
+  highlight_kind: 'GOOD' | 'DEFECTIVE' | 'UNAVAILABLE' | 'UNMAPPED';
+}
+
 @Injectable()
 export class WarehouseLayoutsService {
   async listLayoutTemplates() {
@@ -228,6 +248,14 @@ export class WarehouseLayoutsService {
     const normalizedWarehouseId = requireText(warehouseId, '仓库 ID 不能为空').toUpperCase();
     const result = await queryDatabase<ActiveLayoutRow>(buildActiveLayoutQuery().text, [normalizedWarehouseId]);
     return mapActiveLayoutRows(result.rows);
+  }
+
+  async getProductVisualLocations(productId: string) {
+    const normalizedProductId = requireText(productId, '产品 ID 不能为空').toUpperCase();
+    const result = await queryDatabase<ProductVisualLocationRow>(buildProductVisualLocationsQuery().text, [
+      normalizedProductId,
+    ]);
+    return result.rows.map(mapProductVisualLocationRow);
   }
 
   async createLayout(operatorId: number, body: WarehouseLayoutCreateBody) {
@@ -537,6 +565,27 @@ function mapRackSlotMapRow(row: RackSlotMapRow) {
     bay_no: row.bay_no,
     level_no: row.level_no,
     position: row.position,
+  };
+}
+
+function mapProductVisualLocationRow(row: ProductVisualLocationRow) {
+  return {
+    product_id: row.product_id,
+    warehouse_id: row.warehouse_id,
+    warehouse_name: row.warehouse_name,
+    slot_id: row.slot_id ? Number(row.slot_id) : null,
+    slot_code: row.slot_code,
+    rack_layout_id: row.rack_layout_id ? Number(row.rack_layout_id) : null,
+    rack_code: row.rack_code,
+    bay_no: row.bay_no,
+    level_no: row.level_no,
+    position_code: row.position_code,
+    quality: row.quality,
+    batch_id: row.batch_id,
+    qty_on_hand: Number(row.qty_on_hand),
+    reserved_qty: Number(row.reserved_qty),
+    available_qty: Number(row.available_qty),
+    highlight_kind: row.highlight_kind,
   };
 }
 
