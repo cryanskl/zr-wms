@@ -105,10 +105,10 @@ describe('warehouseMapApi helpers', () => {
     });
 
     expect(calls).toEqual([
-      ['/api/v1/warehouse-layout-templates', undefined],
-      ['/api/v1/rack-templates', undefined],
-      ['/api/v1/warehouse-layouts?warehouse=W1', undefined],
-      ['/api/v1/products/RM-001/visual-locations', undefined],
+      ['/api/v1/warehouse-layout-templates', 'GET'],
+      ['/api/v1/rack-templates', 'GET'],
+      ['/api/v1/warehouse-layouts?warehouse=W1', 'GET'],
+      ['/api/v1/products/RM-001/visual-locations', 'GET'],
       ['/api/v1/rack-templates', 'POST'],
       ['/api/v1/warehouse-layouts', 'POST'],
       ['/api/v1/warehouse-layouts/7', 'PUT'],

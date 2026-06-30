@@ -229,6 +229,7 @@ export function getProductVisualLocations(token: string, productId: string) {
 async function apiFetch<T>(url: string, token: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
     ...init,
+    method: init.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,

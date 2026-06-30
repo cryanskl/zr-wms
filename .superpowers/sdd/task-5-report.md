@@ -126,3 +126,54 @@ pnpm --filter @zr-wms/web build
 
 - `buildElevationCells()` 的 cell 顺序当前为 level -> bay -> position。brief 未指定视图渲染顺序，后续 UI 如果需要从高层到低层展示，建议在 UI 层或后续任务中明确排序规则。
 - 多个 `highlight_kind` 同格时当前优先级为 `UNMAPPED > UNAVAILABLE > DEFECTIVE > GOOD`。这是保守展示风险优先的纯前端规则，brief 未给出明确优先级。
+
+## Fix: Tighten warehouse map API method tests
+
+Reviewer 反馈 read request 测试只断言 `method === undefined`，没有满足 brief 中 “Tests must assert exact URLs and HTTP methods” 的要求。
+
+### RED
+
+先把 `warehouseMapApi.test.ts` 中四个读请求的期望 method 收紧为 `GET`，运行：
+
+```bash
+pnpm --filter @zr-wms/web test -- warehouseMapApi.test.ts
+```
+
+结果按预期失败：`listWarehouseLayoutTemplates`、`listRackTemplates`、`getWarehouseLayout`、`getProductVisualLocations` 的 fetch init method 实际为 `undefined`。
+
+### GREEN
+
+在 `warehouseMapApi.ts` 的本地 `apiFetch()` 中补齐默认 `method: init.method ?? 'GET'`，保留写请求传入的 `POST` / `PUT` 不变。重新运行目标测试通过：
+
+```text
+Test Files  14 passed (14)
+Tests  29 passed (29)
+```
+
+### 验证
+
+```bash
+pnpm --filter @zr-wms/web test
+```
+
+结果：
+
+```text
+Test Files  14 passed (14)
+Tests  29 passed (29)
+```
+
+```bash
+pnpm --filter @zr-wms/web typecheck
+```
+
+结果：
+
+```text
+tsc -b --noEmit
+```
+
+### 顾虑
+
+- 无新增库存写路径。
+- 未改变 API helper 的调用风格；只让默认读请求在 fetch init 中显式带 `GET`，方便测试钉住 URL 和 HTTP method 契约。
